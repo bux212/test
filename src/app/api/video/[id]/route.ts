@@ -61,15 +61,18 @@ export async function GET(
 
     setCachedVideo(id, buffer);
 
-    return new Response(new Uint8Array(buffer), { // ← Преобразуем Buffer в Uint8Array
+    return new Response(new Uint8Array(buffer), {
       headers: {
         'Content-Type': 'video/mp4',
+        'Content-Length': buffer.length.toString(), // <- Добавь размер
         'Content-Disposition': 'inline',
         'Cache-Control': 'public, max-age=3600',
         'X-Cache': 'MISS',
-        'Access-Control-Allow-Origin': '*'
+        'Access-Control-Allow-Origin': '*',
+        'Accept-Ranges': 'bytes' // <- Для проигрывания
       }
     });
+
 
   } catch (error) {
     console.error('Proxy error:', error);

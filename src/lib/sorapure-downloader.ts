@@ -123,6 +123,10 @@ export async function downloadSoraVideo(soraUrl: string) {
     console.log('📦 API response:', JSON.stringify(data).slice(0, 500));
 
     if (data.links?.mp4) {
+      console.log('🔗 Full MP4 URL:', data.links.mp4); // <- Добавь эту строку
+      console.log('🔗 MD URL (low quality):', data.links?.md); // <- И эту
+      console.log('🔗 GIF URL:', data.links?.gif); // <- И эту для сравнения
+      
       result = {
         videoUrl: data.links.mp4,
         title: data.post_info?.title || 'Sora Video',

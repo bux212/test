@@ -2,6 +2,7 @@
 import { Context } from 'telegraf';
 import { supabase } from '@/lib/supabase';
 import { processSora, processSoraVid7 } from '@/lib/sora-api';
+import { postVideoToChannel } from '@/lib/telegram-channel';
 
 export const ERROR_MESSAGES = {
   RATE_LIMIT: '⏱️ Слишком много запросов! Подождите минуту.',
@@ -51,12 +52,26 @@ export async function createProxyUrl(
 
 export async function processUrl(ctx: Context, url: string, index?: number) {
   const chatId = ctx.from!.id;
+  const username = ctx.from!.username;
   const prefix = index !== undefined ? `[${index}/5] ` : '';
 
   try {
     const statusMsg = await ctx.reply(`${prefix}⏳ Обработка...`);
     const result = await processSora(url);
     const videoId = url.match(/([a-f0-9]{32})/i)?.[1] || '';
+
+    // Получаем размер файла
+    let fileSize = 'неизвестно';
+    try {
+      const headResponse = await fetch(result.videoUrl, { method: 'HEAD' });
+      const contentLength = headResponse.headers.get('content-length');
+      if (contentLength) {
+        const bytes = parseInt(contentLength);
+        fileSize = formatFileSize(bytes);
+      }
+    } catch (e) {
+      console.log('⚠️ Could not fetch file size');
+    }
 
     const proxyUrl = await createProxyUrl(
       result.videoUrl,
@@ -68,20 +83,102 @@ export async function processUrl(ctx: Context, url: string, index?: number) {
 
     await ctx.telegram.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
 
+    // Для caption используем короткую версию
+    let captionText = `${prefix}✅ Готово\n📦 Размер: ${fileSize}`;
+    
+    // Если хочешь показать часть title (опционально):
+    // if (result.title && result.title !== 'Untitled') {
+    //   const shortTitle = result.title.length > 50 
+    //     ? result.title.substring(0, 47) + '...' 
+    //     : result.title;
+    //   captionText = `${prefix}✅ ${shortTitle}`;
+    // }
+
     await ctx.replyWithVideo(
       { url: proxyUrl },
       {
-        caption: `${prefix}✅ Готово`,
+        caption: captionText,
         reply_markup: {
-          inline_keyboard: [[{ text: '✨ Скачать 2', callback_data: `retry:${videoId}` }]]
+          inline_keyboard: [[{ text: '❌ Логотип на видео', callback_data: `retry:${videoId}` }]]
         }
       }
     );
 
-    await supabase.rpc('increment_success_count', { user_chat_id: chatId });
+        // Постим в канал
+    await postVideoToChannel({
+      videoUrl: proxyUrl,
+      title: result.title,
+      source: 'bot',
+      userId: chatId,
+      username: username
+    });
+
+    
+    // Получаем текущий счетчик
+    const { data: user } = await supabase
+    .from('users')
+    .select('success_count')
+    .eq('chat_id', chatId)
+    .single();
+    
+    // Увеличиваем на 1
+    await supabase
+    .from('users')
+    .update({ 
+      success_count: (user?.success_count || 0) + 1
+    })
+    .eq('chat_id', chatId);
+    
+
   } catch (error: any) {
     console.error(`Error processing ${url}:`, error);
 
-    // здесь оставляете ту же обработку ошибок, что и сейчас
+    // В src/lib/bot/handlers.ts в функции processUrl после catch (error: any)
+
+    let errorMessage = ERROR_MESSAGES.UNKNOWN_ERROR;
+
+    if (error.message?.includes('not found')) {
+      errorMessage = ERROR_MESSAGES.VIDEO_NOT_FOUND;
+    } else if (error.message?.includes('timeout')) {
+      errorMessage = ERROR_MESSAGES.NETWORK_ERROR;
+    } else if (error.message?.includes('private') || error.message?.includes('restricted')) {
+      errorMessage = ERROR_MESSAGES.VIDEO_PRIVATE;
+    } else if (error.message?.includes('server error')) {
+      errorMessage = ERROR_MESSAGES.API_SERVER_ERROR;
+    } else if (error.message?.includes('Invalid')) {
+      errorMessage = ERROR_MESSAGES.INVALID_VIDEO_URL;
+    }
+
+    // Добавляем сообщение о техподдержке
+    await ctx.reply(
+      `${prefix}${errorMessage}\n\n📎 URL: ${url.substring(0, 50)}...\n\n` +
+      `⚠️ Если проблема повторяется, обратитесь в техподдержку: @feedbckbot`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '💬 Техподдержка', url: 'https://t.me/feedbckbot' }
+          ]]
+        }
+      }
+    );
+
+    await ctx.reply(`${prefix}${errorMessage}\n\n📎 URL: ${url.substring(0, 50)}...`);
+
+    await supabase.from('tasks').insert({
+      chat_id: chatId,
+      sora_url: url,
+      api_used: 'error',
+      status: 'error',
+      error: error.message || 'Unknown error'
+    });
+
   }
+}
+
+// Добавь функцию форматирования размера
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
 }

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processSora, processSoraVid7 } from '@/lib/sora-api';
 import { supabase } from '@/lib/supabase';
+import { postVideoToChannel } from '@/lib/telegram-channel';
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,6 +46,13 @@ export async function POST(request: NextRequest) {
 
     const baseUrl = request.nextUrl.origin;
     const proxyUrl = `${baseUrl}/api/video/${download.id}`;
+
+    // Постим в канал
+    await postVideoToChannel({
+      videoUrl: proxyUrl,
+      title: result.title,
+      source: 'website'
+    });
 
     return NextResponse.json({
       ...result,
