@@ -219,7 +219,7 @@ export async function downloadViaVid7(soraUrl: string): Promise<VideoResult> {
 
     const responseText = await res.text();
     console.log('📦 vid7 status:', res.status);
-    console.log('📦 vid7 raw response:', responseText.slice(0, 300));
+    console.log('📦 vid7 raw response:', responseText.slice(0, 500));
 
     if (!res.ok) {
       throw new Error(`vid7 HTTP ${res.status}`);
@@ -227,23 +227,23 @@ export async function downloadViaVid7(soraUrl: string): Promise<VideoResult> {
 
     const data = JSON.parse(responseText);
 
-    if (data.code !== 200 || !data.success) {
-      throw new Error(`vid7 API error: ${data.msg || 'Unknown'}`);
+    // ✅ ИСПРАВЛЕНИЕ: downloads — это МАССИВ
+    if (data.code !== 200 || !Array.isArray(data.data?.downloads) || data.data.downloads.length === 0) {
+      console.error('📦 Full vid7 response:', JSON.stringify(data, null, 2));
+      throw new Error('No direct URL in vid7 response');
     }
 
-    const downloads = data.data?.downloads || [];
-    const firstDownload = downloads[0];
+    const firstDownload = data.data.downloads[0];
     
-    if (!firstDownload || !firstDownload.url) {
+    if (!firstDownload?.url) {
       throw new Error('No download URL in vid7 response');
     }
 
     const directUrl = firstDownload.url;
     console.log('🔗 Direct URL from vid7 (raw):', directUrl);
 
-    // ВАЖНО: НЕ кодируйте URL дважды!
-    // Проверьте, что directUrl уже содержит %2F, %3A и т.д.
-    const proxyUrl = `https://dl.vid7.link/api/proxy-download?url=${directUrl}&type=video`;
+    // Используем прокси vid7 для обхода CORS
+    const proxyUrl = `https://dl.vid7.link/api/proxy-download?url=${encodeURIComponent(directUrl)}&type=video`;
     
     console.log('🔗 Proxy URL (final):', proxyUrl.slice(0, 200));
     
@@ -264,17 +264,16 @@ function extractTitle(titleField: string): string {
   if (!titleField) return 'Sora Video';
   
   try {
-    // Если title - это JSON-строка (как в вашем примере)
+    // Если title - это JSON-строка
     if (titleField.trim().startsWith('{')) {
       const parsed = JSON.parse(titleField);
       return parsed.title || 'Sora Video';
     }
     return titleField;
   } catch {
-    return titleField.slice(0, 100); // Ограничиваем длину
+    return titleField.slice(0, 100);
   }
 }
-
 
 
 
