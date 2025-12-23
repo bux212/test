@@ -198,69 +198,83 @@ export async function downloadViaVid7(soraUrl: string): Promise<VideoResult> {
   const videoId = soraUrl.match(/(?:ps|p\/s_|s_)([a-f0-9]{32})/i)?.[1];
   if (!videoId) throw new Error('Invalid Sora URL');
 
-  console.log('🟣 Trying vid7.link API');
+  console.log('🟣 Trying vid7.link API for video:', videoId);
 
   try {
     const cleanUrl = soraUrl.split('?')[0];
     
-    // Шаг 1: Получаем данные от vid7.link API
     const res = await fetch('https://vid7.link/api/sora-download', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Referer': 'https://vid7.link/sora-ai-video-downloader',
-        'User-Agent': 'Mozilla/5.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json'
       },
       body: JSON.stringify({
-        shareLink: cleanUrl  // ← ПРАВИЛЬНОЕ ИМЯ ПОЛЯ!
+        shareLink: cleanUrl
       }),
       signal: AbortSignal.timeout(30000)
     });
 
     const responseText = await res.text();
-    console.log('📦 vid7 raw response:', responseText.slice(0, 500));
+    console.log('📦 vid7 status:', res.status);
+    console.log('📦 vid7 raw response:', responseText.slice(0, 300));
 
     if (!res.ok) {
-      console.error('❌ vid7 HTTP error:', res.status);
-      throw new Error(`HTTP ${res.status}`);
+      throw new Error(`vid7 HTTP ${res.status}`);
     }
 
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error('❌ vid7 JSON parse error');
-      throw new Error('Invalid JSON response');
+    const data = JSON.parse(responseText);
+
+    if (data.code !== 200 || !data.success) {
+      throw new Error(`vid7 API error: ${data.msg || 'Unknown'}`);
     }
 
-    console.log('📦 vid7 parsed response:', JSON.stringify(data).slice(0, 500));
-
-    // Шаг 2: Извлекаем прямую ссылку
     const downloads = data.data?.downloads || [];
     const firstDownload = downloads[0];
     
     if (!firstDownload || !firstDownload.url) {
-      throw new Error('No download URL in response');
+      throw new Error('No download URL in vid7 response');
     }
 
     const directUrl = firstDownload.url;
-    console.log('🔗 Direct URL from vid7:', directUrl);
+    console.log('🔗 Direct URL from vid7 (raw):', directUrl);
 
-    // Шаг 3: Формируем proxy URL (как в n8n)
-    const proxyUrl = `https://dl.vid7.link/api/proxy-download?url=${encodeURIComponent(directUrl)}&type=video`;
+    // ВАЖНО: НЕ кодируйте URL дважды!
+    // Проверьте, что directUrl уже содержит %2F, %3A и т.д.
+    const proxyUrl = `https://dl.vid7.link/api/proxy-download?url=${directUrl}&type=video`;
+    
+    console.log('🔗 Proxy URL (final):', proxyUrl.slice(0, 200));
     
     return {
       videoUrl: proxyUrl,
-      title: data.data?.title || 'Sora Video (vid7)',
-      apiUsed: 'dyysy'
+      title: extractTitle(data.data.title) || 'Sora Video',
+      apiUsed: 'vid7'
     };
 
   } catch (error: any) {    
-    console.log('❌ vid7 failed:', error.message);
+    console.error('❌ vid7 failed:', error.message);
     throw error;
   }
 }
+
+// Вспомогательная функция для извлечения title из JSON-строки
+function extractTitle(titleField: string): string {
+  if (!titleField) return 'Sora Video';
+  
+  try {
+    // Если title - это JSON-строка (как в вашем примере)
+    if (titleField.trim().startsWith('{')) {
+      const parsed = JSON.parse(titleField);
+      return parsed.title || 'Sora Video';
+    }
+    return titleField;
+  } catch {
+    return titleField.slice(0, 100); // Ограничиваем длину
+  }
+}
+
 
 
 

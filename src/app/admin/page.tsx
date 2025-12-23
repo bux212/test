@@ -59,7 +59,7 @@ export default function AdminPanel() {
   const [darkMode, setDarkMode] = useState(false);
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
 
-  const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || 'admin123';
+  const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || '427898';
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('adminTheme');
@@ -400,11 +400,11 @@ export default function AdminPanel() {
                     {expandedTask === download.id && (
                       <tr>
                         <td colSpan={6} className={`px-6 py-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                          <div className="space-y-2 text-sm">
+                          <div className={`space-y-2 text-sm ${theme.text}`}>
                             {download.title && (
-                              <div>
+                              <div>expandedTask === task.id &&
                                 <span className="font-bold">Title:</span>
-                                <pre className={`mt-1 p-2 rounded ${darkMode ? 'bg-gray-800' : 'bg-white'} overflow-x-auto text-xs`}>
+                                <pre className={`mt-1 p-2 rounded ${darkMode ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-900'} overflow-x-auto text-xs whitespace-pre-wrap break-words`}>
                                   {download.title}
                                 </pre>
                               </div>
@@ -432,6 +432,7 @@ export default function AdminPanel() {
                         </td>
                       </tr>
                     )}
+
                   </React.Fragment>
                 ))}
               </tbody>
@@ -575,11 +576,11 @@ export default function AdminPanel() {
                     {expandedTask === task.id && (
                       <tr>
                         <td colSpan={6} className={`px-6 py-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                          <div className="space-y-2 text-sm">
+                          <div className={`space-y-2 text-sm ${theme.text}`}>
                             {task.title && (
                               <div>
                                 <span className="font-bold">Title:</span>
-                                <pre className={`mt-1 p-2 rounded ${darkMode ? 'bg-gray-800' : 'bg-white'} overflow-x-auto text-xs`}>
+                                <pre className={`mt-1 p-2 rounded ${darkMode ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-900'} overflow-x-auto text-xs whitespace-pre-wrap break-words`}>
                                   {task.title}
                                 </pre>
                               </div>
@@ -600,7 +601,7 @@ export default function AdminPanel() {
                             {task.error && (
                               <div>
                                 <span className="font-bold text-red-600">Error:</span>
-                                <span className="ml-2">{task.error}</span>
+                                <span className={`ml-2 ${theme.text}`}>{task.error}</span>
                               </div>
                             )}
                           </div>
@@ -701,11 +702,11 @@ export default function AdminPanel() {
                     {expandedTask === download.id && (
                       <tr>
                         <td colSpan={5} className={`px-6 py-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                          <div className="space-y-2 text-sm">
+                          <div className={`space-y-2 text-sm ${theme.text}`}>
                             {download.title && (
                               <div>
                                 <span className="font-bold">Title:</span>
-                                <pre className={`mt-1 p-2 rounded ${darkMode ? 'bg-gray-800' : 'bg-white'} overflow-x-auto text-xs`}>
+                                <pre className={`mt-1 p-2 rounded ${darkMode ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-900'} overflow-x-auto text-xs whitespace-pre-wrap break-words`}>
                                   {download.title}
                                 </pre>
                               </div>

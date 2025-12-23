@@ -1,7 +1,7 @@
 // src/lib/telegram-channel.ts
-import { bot } from '@/lib//bot-instance';
+import { bot } from '@/lib/bot-instance';
 
-const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || '';
+const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || '-1001104374505';
 const BOT_DISABLED = process.env.BOT_DISABLED === 'true';
 
 interface PostToChannelParams {
@@ -10,7 +10,7 @@ interface PostToChannelParams {
   chatId: number;
   soraUrl: string;
   apiUsed: string;
-  source?: string;     // <- Добавь эти 3 строки
+  source?: string;
   userId?: number;
   username?: string;
 }
@@ -21,7 +21,7 @@ export async function postVideoToChannel({
   chatId,
   soraUrl,
   apiUsed,
-  source = 'unknown',    // <- Добавь значения по умолчанию
+  source = 'unknown',
   userId,
   username
 }: PostToChannelParams): Promise<void> {
@@ -44,15 +44,27 @@ export async function postVideoToChannel({
     const botInfo = await bot.telegram.getMe();
     const chatMember = await bot.telegram.getChatMember(parseInt(CHANNEL_ID), botInfo.id);
     
+    console.log(`👤 Bot status: ${chatMember.status}`);
+    
+    // Простая проверка: только статус администратора
     if (chatMember.status !== 'administrator' && chatMember.status !== 'creator') {
       console.error('❌ Bot is not admin in channel, cannot post');
-      return; // НЕ бросаем ошибку, просто выходим
+      return;
     }
 
-    // Пытаемся отправить видео
+    // Логируем права для отладки (но не блокируем отправку)
+    if (chatMember.status === 'administrator') {
+      console.log(`📝 Can post messages flag: ${chatMember.can_post_messages}`);
+    }
+
+    // Формируем caption
+    const finalCaption = caption || 
+      `✅ Готово\n📎 Источник: ${source}\n👤 Пользователь: @${username || 'anonymous'}\n🔧 API: ${apiUsed}`;
+
+    // Пытаемся отправить видео (без дополнительных проверок)
     const message = await bot.telegram.sendVideo(parseInt(CHANNEL_ID), videoUrl, {
-        caption: caption || `✅ Готово\n📎 Источник: ${source}\n👤 Пользователь: @${username || 'anonymous'}\n🔧 API: ${apiUsed}`,
-        parse_mode: 'HTML'
+      caption: finalCaption,
+      parse_mode: 'HTML'
     });
 
     console.log('✅ Video sent to channel, message_id:', message.message_id);
@@ -60,14 +72,16 @@ export async function postVideoToChannel({
   } catch (error: any) {
     console.error('❌ Failed to post to channel:', error.message);
     
-    // Если ошибка прав - логируем и выходим БЕЗ повтора
+    // Если ошибка прав - логируем подробности
     if (error.message?.includes('administrator rights') || 
-        error.message?.includes('not enough rights')) {
-      console.error('⚠️ Bot lacks admin rights, disabling channel posts');
+        error.message?.includes('not enough rights') ||
+        error.message?.includes('need administrator rights')) {
+      console.error('⚠️ Bot lacks required admin rights in channel');
+      console.error('💡 Solution: Check bot has "Post Messages" permission in channel settings');
       return;
     }
     
-    // Для остальных ошибок тоже не повторяем
-    console.error('⚠️ Channel post failed, skipping');
+    // Для остальных ошибок логируем и продолжаем
+    console.error('⚠️ Channel post failed, reason:', error);
   }
 }
