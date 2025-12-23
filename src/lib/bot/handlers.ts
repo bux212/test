@@ -1,8 +1,25 @@
 // src/lib/bot/handlers.ts
+import type { VideoResult } from '@/types/video';
+import { processSora, processSoraVid7 } from '@/lib/sora-api';
 import { Context } from 'telegraf';
 import { supabase } from '@/lib/supabase';
-import { processSora, processSoraVid7 } from '@/lib/sora-api';
 import { postVideoToChannel } from '@/lib/telegram-channel';
+const processedMessages = new Map<string, number>();
+
+// Функция очистки старых (старше 10 минут)
+function cleanOldMessages() {
+  const now = Date.now();
+  const tenMinutes = 10 * 60 * 1000;
+  
+  for (const [key, timestamp] of processedMessages.entries()) {
+    if (now - timestamp > tenMinutes) {
+      processedMessages.delete(key);
+    }
+  }
+}
+
+// Очистка каждую минуту
+setInterval(cleanOldMessages, 60 * 1000);
 
 export const ERROR_MESSAGES = {
   RATE_LIMIT: '⏱️ Слишком много запросов! Подождите минуту.',
@@ -54,6 +71,19 @@ export async function processUrl(ctx: Context, url: string, index?: number) {
   const chatId = ctx.from!.id;
   const username = ctx.from!.username;
   const prefix = index !== undefined ? `[${index}/5] ` : '';
+  //const messageId = ctx.message?.message_id;
+  
+  // Создаём уникальный ключ
+  //const uniqueKey = `${chatId}:${messageId}:${url}`;
+  
+  // Проверяем дубликат
+  //if (processedMessages.has(uniqueKey)) {
+  //    console.log(`⚠️ Duplicate request detected: ${uniqueKey}, skipping`);
+  //  return;
+  //}
+  
+  // Сохраняем с временной меткой
+  //processedMessages.set(uniqueKey, Date.now());  
 
   try {
     const statusMsg = await ctx.reply(`${prefix}⏳ Обработка...`);
@@ -104,16 +134,15 @@ export async function processUrl(ctx: Context, url: string, index?: number) {
       }
     );
 
-        // Постим в канал
+    // Постим в канал
     await postVideoToChannel({
       videoUrl: proxyUrl,
-      title: result.title,
-      source: 'bot',
-      userId: chatId,
-      username: username
+      caption: `✅ Новое видео\n📦 Размер: ${fileSize}\n👤 От: @${username || 'anonymous'}`,
+      chatId: chatId,
+      soraUrl: url,
+      apiUsed: result.apiUsed
     });
-
-    
+ 
     // Получаем текущий счетчик
     const { data: user } = await supabase
     .from('users')
@@ -162,7 +191,10 @@ export async function processUrl(ctx: Context, url: string, index?: number) {
       }
     );
 
+    // УДАЛИ ЭТИ СТРОКИ - ОНИ ДУБЛИРУЮТ СООБЩЕНИЕ:
+    /*
     await ctx.reply(`${prefix}${errorMessage}\n\n📎 URL: ${url.substring(0, 50)}...`);
+    */
 
     await supabase.from('tasks').insert({
       chat_id: chatId,

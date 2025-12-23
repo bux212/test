@@ -1,14 +1,15 @@
 // src/lib/sora-api.ts
 import { downloadSoraVideo, downloadViaVid7 } from './sorapure-downloader';
+import type { VideoResult } from '@/types/video';
 
-export async function processSora(soraUrl: string) {
+export async function processSora(soraUrl: string): Promise<VideoResult> {
   try {
     const result = await downloadSoraVideo(soraUrl);
     
     return {
       videoUrl: result.videoUrl,
       title: result.title,
-      apiUsed: result.source
+      apiUsed: result.apiUsed
     };
   } catch (error: any) {
     console.error('processSora error:', error);
@@ -32,14 +33,14 @@ export async function processSora(soraUrl: string) {
   }
 }
 
-export async function processSoraVid7(soraUrl: string) {
+export async function processSoraVid7(soraUrl: string): Promise<VideoResult> {
   try {
     const result = await downloadViaVid7(soraUrl);
     
     return {
       videoUrl: result.videoUrl,
       title: result.title,
-      apiUsed: result.source
+      apiUsed: result.apiUsed
     };
   } catch (error: any) {
     console.error('processSoraVid7 error:', error);

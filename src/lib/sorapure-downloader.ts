@@ -1,3 +1,7 @@
+import type { VideoResult } from '@/types/video';
+
+
+
 // Глобальный кэш для endpoint
 let cachedEndpoint: { value: string; timestamp: number } | null = null;
 const CACHE_TTL = 3600000; // 1 час в миллисекундах
@@ -50,13 +54,13 @@ async function getEndpoint(): Promise<string> {
 /**
  * Основная функция скачивания видео
  */
-export async function downloadSoraVideo(soraUrl: string) {
+export async function downloadSoraVideo(soraUrl: string): Promise<VideoResult> {
   const videoId = soraUrl.match(/(?:ps|p\/s_|s_)([a-f0-9]{32})/i)?.[1];
   if (!videoId) throw new Error('Invalid Sora URL');
 
   console.log('🎬 Video ID:', videoId);
 
-  let result = { videoUrl: '', title: '', source: '' };
+  //let result = { videoUrl: '', title: '', source: '' };
 
   // 1. PRIMARY: api.dyysy.com
   try {
@@ -105,13 +109,12 @@ export async function downloadSoraVideo(soraUrl: string) {
         if (retryRes.ok && !retryRes.headers.get('content-type')?.includes('text/html')) {
           const retryData = await retryRes.json();
           if (retryData.links?.mp4) {
-            result = {
+            console.log('✅ dyysy SUCCESS (after retry)');
+            return{
               videoUrl: retryData.links.mp4,
               title: retryData.post_info?.title || 'Sora Video',
-              source: 'dyysy'
+              apiUsed: 'dyysy'
             };
-            console.log('✅ dyysy SUCCESS (after retry)');
-            return result;
           }
         }
       }
@@ -127,13 +130,12 @@ export async function downloadSoraVideo(soraUrl: string) {
       console.log('🔗 MD URL (low quality):', data.links?.md); // <- И эту
       console.log('🔗 GIF URL:', data.links?.gif); // <- И эту для сравнения
       
-      result = {
+      console.log('✅ dyysy SUCCESS');
+      return {
         videoUrl: data.links.mp4,
         title: data.post_info?.title || 'Sora Video',
-        source: 'dyysy'
+        apiUsed: 'dyysy'
       };
-      console.log('✅ dyysy SUCCESS');
-      return result;
     }
 
     throw new Error('No MP4 link in response');
@@ -167,15 +169,21 @@ export async function downloadSoraVideo(soraUrl: string) {
     console.log('📦 soracdn response:', JSON.stringify(data).slice(0, 500));
     
     if (data.links?.mp4) {
-      result = {
+      console.log('✅ soracdn SUCCESS');
+      return{
         videoUrl: data.links.mp4,
         title: data.post_info?.title || data.title || 'Sora Video',
-        source: 'soracdn'
+        apiUsed: 'dyysy'
       };
-      console.log('✅ soracdn SUCCESS');
-      return result;
+      
     }
     
+    return {
+    videoUrl: data.links.mp4,
+    title: data.post_info?.title || 'Sora Video',
+    apiUsed: 'dyysy'
+  };
+
   } catch (error: any) {
     console.log('❌ soracdn failed:', error.message);
   }
@@ -186,7 +194,7 @@ export async function downloadSoraVideo(soraUrl: string) {
 /**
  * Альтернативный API для удаления логотипа (vid7.link)
  */
-export async function downloadViaVid7(soraUrl: string) {
+export async function downloadViaVid7(soraUrl: string): Promise<VideoResult> {
   const videoId = soraUrl.match(/(?:ps|p\/s_|s_)([a-f0-9]{32})/i)?.[1];
   if (!videoId) throw new Error('Invalid Sora URL');
 
@@ -245,7 +253,7 @@ export async function downloadViaVid7(soraUrl: string) {
     return {
       videoUrl: proxyUrl,
       title: data.data?.title || 'Sora Video (vid7)',
-      source: 'vid7'
+      apiUsed: 'dyysy'
     };
 
   } catch (error: any) {    

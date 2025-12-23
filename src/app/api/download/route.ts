@@ -47,12 +47,22 @@ export async function POST(request: NextRequest) {
     const baseUrl = request.nextUrl.origin;
     const proxyUrl = `${baseUrl}/api/video/${download.id}`;
 
-    // Постим в канал
-    await postVideoToChannel({
-      videoUrl: proxyUrl,
-      title: result.title,
-      source: 'website'
-    });
+    // Постим в канал (опционально)
+    try {
+      await postVideoToChannel({
+        videoUrl: proxyUrl,
+        caption: `✅ ${result.title}\n🌐 Скачано с сайта`,
+        chatId: 0,
+        soraUrl: url,
+        apiUsed: result.apiUsed,
+        source: 'website',
+        userId: 0,
+        username: 'web'
+      });
+    } catch (channelError) {
+      // Игнорируем ошибки постинга в канал для веб-версии
+      console.log('Channel post skipped for web download');
+    }
 
     return NextResponse.json({
       ...result,
