@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processSora, processSoraVid7 } from '@/lib/sora-api';
 import { supabase } from '@/lib/supabase';
 import { postVideoToChannel } from '@/lib/telegram-channel';
+import { extractFullDescription } from '@/lib/sorapure-downloader';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,9 +16,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = removeWatermark 
-      ? await processSoraVid7(url)
-      : await processSora(url);
+    //const result = removeWatermark 
+    //  ? await processSoraVid7(url)
+    //  : await processSora(url);
+
+    const result = await processSora(soraUrl);
+    const fullDescription = extractFullDescription(result.title);
 
     // Получаем IP для логирования (опционально)
     const ip = request.headers.get('x-forwarded-for') || 
@@ -46,8 +50,21 @@ export async function POST(request: NextRequest) {
 
     const baseUrl = request.nextUrl.origin;
     const proxyUrl = `${baseUrl}/api/video/${download.id}`;
+    
+    // Постим в канал из веб-версии
+    await postVideoToChannel({
+      videoUrl: result.videoUrl,
+      soraUrl: soraUrl,
+      apiUsed: 'web',
+      fullDescription: fullDescription,
+      title: result.title
+    });
+    
+    return Response.json({ success: true, data: result });
+
 
     // Постим в канал (опционально)
+    /*
     try {
       await postVideoToChannel({
         videoUrl: proxyUrl,
@@ -58,7 +75,7 @@ export async function POST(request: NextRequest) {
         source: 'website',
         userId: 0,
         username: 'web'
-      });
+      }); */
     } catch (channelError) {
       // Игнорируем ошибки постинга в канал для веб-версии
       console.log('Channel post skipped for web download');

@@ -276,6 +276,25 @@ function extractTitle(titleField: string): string {
 }
 
 
+/**
+ * Извлекает полное описание из title поля
+ */
+export function extractFullDescription(titleField: string): string {
+  if (!titleField) return '';
+  
+  try {
+    // Если это JSON-строка, возвращаем её в читаемом виде
+    if (titleField.trim().startsWith('{')) {
+      const parsed = JSON.parse(titleField);
+      return JSON.stringify(parsed, null, 2);
+    }
+    return titleField;
+  } catch {
+    return titleField;
+  }
+}
+
+
 
 /**
  * Возвращает возраст кэша в секундах (или null, если кэш пуст)

@@ -4,6 +4,7 @@ import { processSora, processSoraVid7 } from '@/lib/sora-api';
 import { Context } from 'telegraf';
 import { supabase } from '@/lib/supabase';
 import { postVideoToChannel } from '@/lib/telegram-channel';
+import { extractFullDescription } from '@/lib/sorapure-downloader';
 const processedMessages = new Map<string, number>();
 
 // Функция очистки старых (старше 10 минут)
@@ -133,6 +134,22 @@ export async function processUrl(ctx: Context, url: string, index?: number) {
         }
       }
     );
+
+    // Получаем полное описание
+    const fullDescription = extractFullDescription(result.title);
+
+    // Постим в канал с полным описанием
+    await postVideoToChannel({
+      videoUrl: proxyUrl,
+      fileSize: fileSize,
+      username: username,
+      chatId: chatId,
+      soraUrl: url,
+      apiUsed: result.apiUsed as 'dyysy' | 'vid7',
+      fullDescription: fullDescription,
+      title: result.title
+    });
+
 
     // Постим в канал
     await postVideoToChannel({

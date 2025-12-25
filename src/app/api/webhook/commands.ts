@@ -5,6 +5,7 @@ import { checkRateLimit, checkButtonCooldown } from '@/lib/bot/rate-limit'; // <
 import { supabase } from '@/lib/supabase';
 import { processSoraVid7 } from '@/lib/sora-api'; // <- Добавил
 import { postVideoToChannel } from '@/lib/telegram-channel'; // <- Добавил
+import { extractFullDescription } from '@/lib/sorapure-downloader';
 
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '0');
 
@@ -138,6 +139,7 @@ bot.command('support', async (ctx) => {
 });
 
 bot.on('callback_query', async (ctx) => {
+  const data = ctx.callbackQuery.data;
   const chatId = ctx.from.id;
   const callbackData = (ctx.callbackQuery as any).data;
   console.log('Received callback_query:', callbackData); // <- Для отладки
@@ -186,9 +188,35 @@ bot.on('callback_query', async (ctx) => {
   }
 
   // Обработка кнопки "Альтернативная версия"
-  if (!callbackData.startsWith('retry:')) {
-    await ctx.answerCbQuery('Неверная команда', { show_alert: true });
-    return;
+  if (data?.startsWith('retry:')) {
+    const videoId = data.split(':')[1];
+    const soraUrl = `https://sora.chatgpt.com/p/s_${videoId}`;
+    
+    await ctx.answerCbQuery('🔄 Загрузка через VID7...');
+    
+    try {
+      const result = await processSoraVid7(soraUrl);
+      const fullDescription = extractFullDescription(result.title);
+      
+      await ctx.replyWithVideo(
+        { url: result.videoUrl },
+        { caption: `✅ Видео без водяного знака\n🟣 Источник: VID7 API` }
+      );
+
+      // Постим в канал
+      await postVideoToChannel({
+        videoUrl: result.videoUrl,
+        username: ctx.from?.username,
+        chatId: ctx.from?.id,
+        soraUrl: soraUrl,
+        apiUsed: 'vid7',
+        fullDescription: fullDescription,
+        title: result.title
+      });
+      
+    } catch (error: any) {
+      await ctx.reply('❌ Ошибка при загрузке через VID7');
+    }
   }
 
   const cooldownResult = await checkButtonCooldown(chatId);
