@@ -25,10 +25,10 @@ function formatCaption(data: PostToChannelParams): string {
   
   if (apiUsed === 'dyysy') {
     sourceEmoji = '🔵';
-    sourceName = 'DYYSY API';
+    sourceName = 'Основное';
   } else if (apiUsed === 'vid7') {
     sourceEmoji = '🟣';
-    sourceName = 'VID7 API';
+    sourceName = 'Резервное';
   } else if (apiUsed === 'web') {
     sourceEmoji = '🌐';
     sourceName = 'Website';
@@ -110,7 +110,8 @@ export async function postVideoToChannel(params: PostToChannelParams): Promise<v
         `🎬 Полное описание:\n\`\`\`\n${fullDescription}\n\`\`\``,
         { 
           parse_mode: 'Markdown',
-          reply_to_message_id: message.message_id
+          reply_parameters: { message_id: message.message_id }
+
         }
       );
       console.log('✅ Posted full description as reply');

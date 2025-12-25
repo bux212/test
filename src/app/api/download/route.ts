@@ -16,11 +16,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    //const result = removeWatermark 
-    //  ? await processSoraVid7(url)
-    //  : await processSora(url);
+    // Выбор API в зависимости от параметра removeWatermark
+    const result = removeWatermark 
+      ? await processSoraVid7(url)
+      : await processSora(url);
 
-    const result = await processSora(soraUrl);
     const fullDescription = extractFullDescription(result.title);
 
     // Получаем IP для логирования (опционально)
@@ -52,33 +52,17 @@ export async function POST(request: NextRequest) {
     const proxyUrl = `${baseUrl}/api/video/${download.id}`;
     
     // Постим в канал из веб-версии
-    await postVideoToChannel({
-      videoUrl: result.videoUrl,
-      soraUrl: soraUrl,
-      apiUsed: 'web',
-      fullDescription: fullDescription,
-      title: result.title
-    });
-    
-    return Response.json({ success: true, data: result });
-
-
-    // Постим в канал (опционально)
-    /*
     try {
       await postVideoToChannel({
         videoUrl: proxyUrl,
-        caption: `✅ ${result.title}\n🌐 Скачано с сайта`,
-        chatId: 0,
         soraUrl: url,
-        apiUsed: result.apiUsed,
-        source: 'website',
-        userId: 0,
-        username: 'web'
-      }); */
+        apiUsed: 'web',
+        fullDescription: fullDescription,
+        title: result.title
+      });
     } catch (channelError) {
       // Игнорируем ошибки постинга в канал для веб-версии
-      console.log('Channel post skipped for web download');
+      console.log('Channel post skipped for web download:', channelError);
     }
 
     return NextResponse.json({

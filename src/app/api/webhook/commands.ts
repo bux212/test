@@ -1,15 +1,28 @@
 // src/app/api/webhook/commands.ts
 import { bot } from '@/lib/bot-instance';
 import { processUrl, ERROR_MESSAGES } from '@/lib/bot/handlers';
-import { checkRateLimit, checkButtonCooldown } from '@/lib/bot/rate-limit'; // <- Добавил checkButtonCooldown
+import { checkRateLimit, checkButtonCooldown } from '@/lib/bot/rate-limit';
 import { supabase } from '@/lib/supabase';
-import { processSoraVid7 } from '@/lib/sora-api'; // <- Добавил
-import { postVideoToChannel } from '@/lib/telegram-channel'; // <- Добавил
+import { processSoraVid7 } from '@/lib/sora-api';
+import { postVideoToChannel } from '@/lib/telegram-channel';
 import { extractFullDescription } from '@/lib/sorapure-downloader';
+import { t, getUserLanguage, setUserLanguage, type Language } from '@/lib/i18n';
 
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '0');
+// Дедупликация
+const processedMessages = new Map<string, number>();
 
-// Функция форматирования размера (добавь)
+// Очистка старых записей каждые 5 минут
+setInterval(() => {
+  const now = Date.now();
+  const fiveMinutes = 5 * 60 * 1000;
+  for (const [key, timestamp] of processedMessages.entries()) {
+    if (now - timestamp > fiveMinutes) {
+      processedMessages.delete(key);
+    }
+  }
+}, 60 * 1000);
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -21,31 +34,78 @@ bot.command('start', async (ctx) => {
   const chatId = ctx.from.id;
   const username = ctx.from.username || null;
 
-  await supabase
+  // Проверяем, есть ли уже язык у пользователя
+  const { data: existingUser } = await supabase
     .from('users')
-    .upsert({ 
-      chat_id: chatId, 
-      username: username,
-      created_at: new Date().toISOString()
-    }, { 
-      onConflict: 'chat_id' 
-    });
+    .select('language')
+    .eq('chat_id', chatId)
+    .single();
+  
+  if (!existingUser || !existingUser.language) {
+    // Новый пользователь - показываем выбор языка
+    await supabase
+      .from('users')
+      .upsert({
+        chat_id: chatId,
+        username: username,
+        language: null, // Язык ещё не выбран
+        created_at: new Date().toISOString()
+      }, { onConflict: 'chat_id' });
+
+    return await ctx.reply(
+      '🌐 Please select your language / Пожалуйста, выберите язык:',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🇺🇸 English', callback_data: 'lang:en' },
+              { text: '🇷🇺 Русский', callback_data: 'lang:ru' }
+            ]
+          ]
+        }
+      }
+    );
+  }
+
+ // Язык уже выбран - показываем приветствие
+  const lang = (existingUser.language as Language) || 'ru';
 
   await ctx.reply(
-    '👋 Привет! Я бот для скачивания видео из Sora AI.\n\n' +
-    '📝 Как использовать:\n' +
-    '1. Отправь ссылку на Sora видео\n' +
-    '2. Получи видео\n' +
-    '3. Нажми кнопку "❌ Логотип на видео" если остался логотип\n\n' +
-    '💡 Можно отправить до 5 ссылок за раз (каждая с новой строки)\n\n' +
-    '⚡️ Лимиты: 10 запросов в минуту\n\n' +
-    '❓ Есть вопросы? /support',
+    `${t(lang, 'welcome')}\n\n` +
+    `${t(lang, 'howToUse')}\n` +
+    `${t(lang, 'step1')}\n` +
+    `${t(lang, 'step2')}\n` +
+    `${t(lang, 'step3')}\n\n` +
+    `${t(lang, 'multipleLinks')}\n\n` +
+    `${t(lang, 'limits')}\n\n` +
+    `${t(lang, 'questions')} /support`,
     {
       reply_markup: {
-        inline_keyboard: [[
-          { text: '💬 Техподдержка', url: 'https://t.me/feedbckbot' },
-          { text: '📊 Cтатистика', callback_data: 'stats' }
-        ]]
+        inline_keyboard: [
+          [
+            { text: t(lang, 'btnSupport'), url: 'https://t.me/feedbckbot' },
+            { text: t(lang, 'btnStats'), callback_data: 'stats' }
+          ],
+          [
+            { text: t(lang, 'btnLanguage'), callback_data: 'change_lang' }
+          ]
+        ]
+      }
+    }
+  );
+});
+
+bot.command('language', async (ctx) => {
+  await ctx.reply(
+    '🌐 Select language / Выберите язык:',
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🇺🇸 English', callback_data: 'lang:en' },
+            { text: '🇷🇺 Русский', callback_data: 'lang:ru' }
+          ]
+        ]
       }
     }
   );
@@ -53,21 +113,9 @@ bot.command('start', async (ctx) => {
 
 bot.command('stats', async (ctx) => {
   const chatId = ctx.from.id;
+  const lang = await getUserLanguage(chatId);
 
   try {
-    // Убедимся что пользователь есть в базе
-    await supabase
-      .from('users')
-      .upsert({ 
-        chat_id: chatId, 
-        username: ctx.from.username || null,
-        created_at: new Date().toISOString()
-      }, { 
-        onConflict: 'chat_id',
-        ignoreDuplicates: false
-      });
-
-    // Получаем все задачи пользователя
     const { data: tasks } = await supabase
       .from('tasks')
       .select('api_used, status')
@@ -79,75 +127,341 @@ bot.command('stats', async (ctx) => {
       .eq('chat_id', chatId)
       .single();
 
-    // Считаем статистику
     const successTasks = tasks?.filter(t => t.status === 'success') || [];
     const totalDownloads = successTasks.length;
     const dyysyCount = tasks?.filter(t => t.api_used === 'dyysy' && t.status === 'success').length || 0;
     const vid7Count = tasks?.filter(t => t.api_used === 'vid7' && t.status === 'success').length || 0;
     const errorCount = tasks?.filter(t => t.status === 'error').length || 0;
-    const memberSince = user?.created_at ? new Date(user.created_at).toLocaleDateString('ru-RU') : 'Сегодня';
+    const memberSince = user?.created_at 
+      ? new Date(user.created_at).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US') 
+      : (lang === 'ru' ? 'Сегодня' : 'Today');
 
     await ctx.reply(
-      `📊 *Ваша статистика:*\n\n` +
-      `✅ Всего скачано: *${totalDownloads}*\n` +
-      `📹 Основной: ${dyysyCount}\n` +
-      `🎬 Резервный: ${vid7Count}\n` +
-      `❌ Ошибок: ${errorCount}\n\n` +
-      `📅 С нами с: ${memberSince}`,
+      `${t(lang, 'yourStats')}\n\n` +
+      `${t(lang, 'totalDownloaded', { count: totalDownloads })}\n` +
+      `${t(lang, 'mainApi', { count: dyysyCount })}\n` +
+      `${t(lang, 'reserveApi', { count: vid7Count })}\n` +
+      `${t(lang, 'errors', { count: errorCount })}\n\n` +
+      `${t(lang, 'memberSince', { date: memberSince })}`,
       { parse_mode: 'Markdown' }
     );
-
   } catch (error) {
     console.error('Stats error:', error);
-    await ctx.reply('❌ Ошибка получения статистики.');
+    await ctx.reply(t(lang, 'errStats'));
   }
 });
 
 bot.command('admin', async (ctx) => {
   const chatId = ctx.from.id;
+  const lang = await getUserLanguage(chatId);
   
   if (chatId !== ADMIN_ID) {
-    return await ctx.reply('❌ У вас нет прав администратора.');
+    return await ctx.reply(t(lang, 'adminNoAccess'));
   }
-  
-  const domain = process.env.WEBHOOK_URL?.replace('/api/webhook', '') || 'your-domain.vercel.app';
-  await ctx.reply(
-    `🔐 Админ-панель доступна по адресу:\n\n` +
-    `${domain}/admin\n\n` +
-    `🔑 Пароль: ${process.env.NEXT_PUBLIC_ADMIN_PASSWORD || 'sora2025'}`
-  );
+
+  try {
+    // 1. Общая статистика пользователей
+    const { data: usersData, error: usersError } = await supabase
+      .from('users')
+      .select('chat_id, created_at, language, success_count');
+
+    if (usersError) throw usersError;
+
+    const totalUsers = usersData?.length || 0;
+    const rusUsers = usersData?.filter(u => u.language === 'ru').length || 0;
+    const enUsers = usersData?.filter(u => u.language === 'en').length || 0;
+    const noLangUsers = usersData?.filter(u => !u.language).length || 0;
+
+    // Новые пользователи за последние 24 часа
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const newUsersToday = usersData?.filter(u => u.created_at > oneDayAgo).length || 0;
+
+    // Новые пользователи за последние 7 дней
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const newUsersWeek = usersData?.filter(u => u.created_at > sevenDaysAgo).length || 0;
+
+    // 2. Статистика загрузок
+    const { data: tasksData, error: tasksError } = await supabase
+      .from('tasks')
+      .select('api_used, status, created_at');
+
+    if (tasksError) throw tasksError;
+
+    const totalTasks = tasksData?.length || 0;
+    const successTasks = tasksData?.filter(t => t.status === 'success').length || 0;
+    const errorTasks = tasksData?.filter(t => t.status === 'error').length || 0;
+    const dyysyCount = tasksData?.filter(t => t.api_used === 'dyysy' && t.status === 'success').length || 0;
+    const vid7Count = tasksData?.filter(t => t.api_used === 'vid7' && t.status === 'success').length || 0;
+
+    // Загрузки за последние 24 часа
+    const downloadsToday = tasksData?.filter(t => t.created_at > oneDayAgo && t.status === 'success').length || 0;
+
+    // 3. Статистика веб-загрузок
+    const { data: webDownloads, error: webError } = await supabase
+      .from('web_downloads')
+      .select('created_at');
+
+    const totalWebDownloads = webDownloads?.length || 0;
+    const webDownloadsToday = webDownloads?.filter(w => w.created_at > oneDayAgo).length || 0;
+
+    // 4. Статистика рассылок
+    const { data: broadcasts, error: broadcastError } = await supabase
+      .from('broadcasts')
+      .select('sent_count, failed_count, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const lastBroadcast = broadcasts?.[0];
+    const lastBroadcastDate = lastBroadcast?.created_at 
+      ? new Date(lastBroadcast.created_at).toLocaleString('ru-RU')
+      : 'Нет данных';
+
+    // 5. Топ активных пользователей
+    const topUsers = usersData
+      ?.sort((a, b) => (b.success_count || 0) - (a.success_count || 0))
+      .slice(0, 5) || [];
+
+    // Формируем сообщение
+    const domain = process.env.WEBHOOK_URL?.replace('/api/webhook', '') || 'your-domain.vercel.app';
+    const adminPassword = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || 'sora2025';
+
+    const statsMessage = 
+      `🔐 *АДМИН-ПАНЕЛЬ*\n\n` +
+      
+      `👥 *ПОЛЬЗОВАТЕЛИ*\n` +
+      `├ Всего: *${totalUsers}*\n` +
+      `├ 🇷🇺 Русский: ${rusUsers}\n` +
+      `├ 🇺🇸 English: ${enUsers}\n` +
+      `├ ⚪️ Без языка: ${noLangUsers}\n` +
+      `├ 📈 Новых за 24ч: ${newUsersToday}\n` +
+      `└ 📊 Новых за 7д: ${newUsersWeek}\n\n` +
+      
+      `📥 *ЗАГРУЗКИ (БОТ)*\n` +
+      `├ Всего: *${totalTasks}*\n` +
+      `├ ✅ Успешно: ${successTasks}\n` +
+      `├ ❌ Ошибок: ${errorTasks}\n` +
+      `├ 🔵 DYYSY API: ${dyysyCount}\n` +
+      `├ 🟣 VID7 API: ${vid7Count}\n` +
+      `└ 📈 За 24ч: ${downloadsToday}\n\n` +
+      
+      `🌐 *ЗАГРУЗКИ (ВЕБ)*\n` +
+      `├ Всего: *${totalWebDownloads}*\n` +
+      `└ 📈 За 24ч: ${webDownloadsToday}\n\n` +
+      
+      `📢 *РАССЫЛКИ*\n` +
+      `├ Последняя: ${lastBroadcastDate}\n` +
+      `├ ✅ Отправлено: ${lastBroadcast?.sent_count || 0}\n` +
+      `└ ❌ Ошибок: ${lastBroadcast?.failed_count || 0}\n\n` +
+      
+      `🏆 *ТОП-5 АКТИВНЫХ*\n` +
+      topUsers.map((u, i) => 
+        `${i + 1}. ID ${u.chat_id}: ${u.success_count || 0} загрузок`
+      ).join('\n') + '\n\n' +
+      
+      `🔗 *ССЫЛКИ*\n` +
+      `Панель: ${domain}/admin\n` +
+      `Пароль: \`${adminPassword}\`\n\n` +
+      
+      `📋 *КОМАНДЫ*\n` +
+      `• \`/broadcast <текст>\` - Рассылка\n` +
+      `• \`/stats\` - Моя статистика\n` +
+      `• \`/admin\` - Эта панель`;
+
+    await ctx.reply(statsMessage, { 
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🌐 Открыть админ-панель', url: `${domain}/admin` }
+          ],
+          [
+            { text: '🔄 Обновить статистику', callback_data: 'admin_refresh' }
+          ]
+        ]
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Admin stats error:', error);
+    await ctx.reply(
+      '❌ Ошибка получения статистики\n\n' +
+      `Детали: ${error.message}`
+    );
+  }
 });
 
+
 bot.command('support', async (ctx) => {
+  const lang = await getUserLanguage(ctx.from.id);
+  
   await ctx.reply(
-    '💬 *Техническая поддержка*\n\n' +
-    'Если у вас возникли проблемы с ботом, напишите в @feedbckbot\n\n' +
-    '📝 Укажите в сообщении:\n' +
-    '• Ссылку на видео, которое не скачалось\n' +
-    '• Описание проблемы\n' +
-    '• Скриншот ошибки (если есть)\n\n' +
-    'Мы постараемся ответить как можно быстрее! 🚀',
+    `${t(lang, 'supportTitle')}\n\n` +
+    `${t(lang, 'supportText')}\n\n` +
+    `${t(lang, 'supportInclude')}\n` +
+    `${t(lang, 'supportLink')}\n` +
+    `${t(lang, 'supportProblem')}\n` +
+    `${t(lang, 'supportScreenshot')}\n\n` +
+    `${t(lang, 'supportFast')}`,
     {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [[
-          { text: '💬 Написать в поддержку', url: 'https://t.me/feedbckbot' }
+          { text: t(lang, 'btnContactSupport'), url: 'https://t.me/feedbckbot' }
         ]]
       }
     }
   );
 });
 
-bot.on('callback_query', async (ctx) => {
-  const data = ctx.callbackQuery.data;
+// 🆕 КОМАНДА ДЛЯ РАССЫЛКИ (только для админа)
+bot.command('broadcast', async (ctx) => {
   const chatId = ctx.from.id;
+  
+  if (chatId !== ADMIN_ID) {
+    return await ctx.reply('❌ Access denied');
+  }
+
+  const text = ctx.message.text.replace('/broadcast', '').trim();
+  
+  if (!text) {
+    return await ctx.reply(
+      '📢 *Как использовать рассылку:*\n\n' +
+      '`/broadcast Текст сообщения`\n\n' +
+      'Сообщение будет отправлено всем пользователям бота.',
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  await ctx.reply('🔄 Начинаю рассылку...');
+
+  try {
+    // Получаем всех пользователей
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('chat_id');
+
+    if (usersError) {
+      console.error('Error fetching users:', usersError);
+      return await ctx.reply('❌ Ошибка получения списка пользователей');
+    }
+
+    if (!users || users.length === 0) {
+      return await ctx.reply('❌ Нет пользователей для рассылки');
+    }
+
+    let sent = 0;
+    let failed = 0;
+
+    // Отправляем сообщения всем пользователям
+    for (const user of users) {
+      try {
+        await bot.telegram.sendMessage(user.chat_id, text, { parse_mode: 'Markdown' });
+        sent++;
+      } catch (error: any) {
+        failed++;
+        console.error(`Failed to send to ${user.chat_id}:`, error.message);
+      }
+      
+      // Задержка для соблюдения лимитов Telegram (30 сообщений/сек)
+      await new Promise(r => setTimeout(r, 35));
+    }
+
+    // Сохраняем статистику рассылки (опционально)
+    try {
+      await supabase
+        .from('broadcasts')
+        .insert({
+          message_text: text,
+          sent_count: sent,
+          failed_count: failed,
+          status: 'completed',
+          completed_at: new Date().toISOString()
+        });
+    } catch (dbError) {
+      console.error('Error saving broadcast stats:', dbError);
+      // Продолжаем, даже если не удалось сохранить статистику
+    }
+
+    await ctx.reply(
+      `✅ Рассылка завершена!\n\n` +
+      `📤 Отправлено: ${sent}\n` +
+      `❌ Не доставлено: ${failed}\n` +
+      `👥 Всего пользователей: ${users.length}`
+    );
+
+  } catch (error: any) {
+    console.error('Broadcast error:', error);
+    await ctx.reply('❌ Ошибка при рассылке: ' + error.message);
+  }
+});
+
+
+bot.on('callback_query', async (ctx) => {
   const callbackData = (ctx.callbackQuery as any).data;
-  console.log('Received callback_query:', callbackData); // <- Для отладки
+  const chatId = ctx.from.id;
+
+  console.log('Received callback_query:', callbackData);
+
+  // Обработка выбора языка
+  if (callbackData?.startsWith('lang:')) {
+    const lang = callbackData.split(':')[1] as Language;
+    await setUserLanguage(chatId, lang);
+    
+    await ctx.answerCbQuery(t(lang, 'languageChanged'));
+    
+    // Показываем приветствие на выбранном языке
+    await ctx.reply(
+      `${t(lang, 'welcome')}\n\n` +
+      `${t(lang, 'howToUse')}\n` +
+      `${t(lang, 'step1')}\n` +
+      `${t(lang, 'step2')}\n` +
+      `${t(lang, 'step3')}\n\n` +
+      `${t(lang, 'multipleLinks')}\n\n` +
+      `${t(lang, 'limits')}\n\n` +
+      `${t(lang, 'questions')} /support`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: t(lang, 'btnSupport'), url: 'https://t.me/feedbckbot' },
+              { text: t(lang, 'btnStats'), callback_data: 'stats' }
+            ],
+            [
+              { text: t(lang, 'btnLanguage'), callback_data: 'change_lang' }
+            ]
+          ]
+        }
+      }
+    );
+    return;
+  }
+
+  // Обработка кнопки смены языка
+  if (callbackData === 'change_lang') {
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      '🌐 Select language / Выберите язык:',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🇺🇸 English', callback_data: 'lang:en' },
+              { text: '🇷🇺 Русский', callback_data: 'lang:ru' }
+            ]
+          ]
+        }
+      }
+    );
+    return;
+  }
+
+  const lang = await getUserLanguage(chatId);
 
   // Обработка кнопки "Статистика"
   if (callbackData === 'stats') {
-    await ctx.answerCbQuery(); // <- Сразу отвечаем на callback
-    try {            
+    await ctx.answerCbQuery();
+    
+    try {
       const { data: tasks } = await supabase
         .from('tasks')
         .select('api_used, status')
@@ -159,163 +473,129 @@ bot.on('callback_query', async (ctx) => {
         .eq('chat_id', chatId)
         .single();
 
-      // Считаем успешные скачивания
       const successTasks = tasks?.filter(t => t.status === 'success') || [];
       const totalDownloads = successTasks.length;
-      
       const dyysyCount = tasks?.filter(t => t.api_used === 'dyysy' && t.status === 'success').length || 0;
       const vid7Count = tasks?.filter(t => t.api_used === 'vid7' && t.status === 'success').length || 0;
       const errorCount = tasks?.filter(t => t.status === 'error').length || 0;
-      const memberSince = user?.created_at ? new Date(user.created_at).toLocaleDateString('ru-RU') : 'Сегодня';
+      const memberSince = user?.created_at 
+        ? new Date(user.created_at).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US') 
+        : (lang === 'ru' ? 'Сегодня' : 'Today');
 
       await ctx.reply(
-        `📊 *Ваша статистика:*\n\n` +
-        `✅ Всего скачано: *${totalDownloads}*\n` +
-        `📹 Основной: ${dyysyCount}\n` +
-        `🎬 Резервный: ${vid7Count}\n` +
-        `❌ Ошибок: ${errorCount}\n\n` +
-        `📅 С нами с: ${memberSince}`,
+        `${t(lang, 'yourStats')}\n\n` +
+        `${t(lang, 'totalDownloaded', { count: totalDownloads })}\n` +
+        `${t(lang, 'mainApi', { count: dyysyCount })}\n` +
+        `${t(lang, 'reserveApi', { count: vid7Count })}\n` +
+        `${t(lang, 'errors', { count: errorCount })}\n\n` +
+        `${t(lang, 'memberSince', { date: memberSince })}`,
         { parse_mode: 'Markdown' }
       );
-
     } catch (error) {
       console.error('Stats error:', error);
-      await ctx.answerCbQuery('Ошибка'); // <- Если ошибка, тоже нужен answerCbQuery
-      await ctx.reply('❌ Ошибка получения статистики.');
+      await ctx.answerCbQuery(t(lang, 'errStats'));
+      await ctx.reply(t(lang, 'errStats'));
     }
-    
-    return; // <- Важно! Выходим из функции
+    return;
   }
 
-  // Обработка кнопки "Альтернативная версия"
-  if (data?.startsWith('retry:')) {
-    const videoId = data.split(':')[1];
+  // Обработка кнопки "Альтернативная версия" (retry:)
+  if (callbackData?.startsWith('retry:')) {
+    const cooldownResult = await checkButtonCooldown(chatId);
+    if (!cooldownResult.allowed) {
+      return await ctx.answerCbQuery(cooldownResult.message!, { show_alert: true });
+    }
+
+    const videoId = callbackData.split(':')[1];
     const soraUrl = `https://sora.chatgpt.com/p/s_${videoId}`;
     
-    await ctx.answerCbQuery('🔄 Загрузка через VID7...');
-    
+    await ctx.answerCbQuery(t(lang, 'processing'));
+    const statusMsg = await ctx.reply(t(lang, 'downloading'));
+
     try {
       const result = await processSoraVid7(soraUrl);
       const fullDescription = extractFullDescription(result.title);
-      
+
+      let fileSize = 'unknown';
+      try {
+        const headResponse = await fetch(result.videoUrl, { method: 'HEAD' });
+        const contentLength = headResponse.headers.get('content-length');
+        if (contentLength) {
+          const bytes = parseInt(contentLength);
+          fileSize = formatFileSize(bytes);
+        }
+      } catch (e) {
+        console.log('⚠️ Could not fetch file size');
+      }
+
+      const { data: task } = await supabase
+        .from('tasks')
+        .insert({
+          chat_id: chatId,
+          sora_url: soraUrl,
+          api_used: result.apiUsed,
+          status: 'success',
+          result_url: result.videoUrl,
+          title: result.title
+        })
+        .select('id')
+        .single();
+
+      const baseUrl = process.env.WEBHOOK_URL?.replace('/api/webhook', '') || 'https://sora-bot-five.vercel.app';
+      const proxyUrl = task ? `${baseUrl}/api/video/${task.id}` : result.videoUrl;
+
+      await ctx.telegram.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+
       await ctx.replyWithVideo(
-        { url: result.videoUrl },
-        { caption: `✅ Видео без водяного знака\n🟣 Источник: VID7 API` }
+        { url: proxyUrl },
+        {
+          caption: `${t(lang, 'doneAlt')}\n${t(lang, 'fileSize', { size: fileSize })}\n\n${t(lang, 'watermarkWarning')}`
+        }
       );
 
-      // Постим в канал
       await postVideoToChannel({
-        videoUrl: result.videoUrl,
+        videoUrl: proxyUrl,
+        fileSize: fileSize,
         username: ctx.from?.username,
-        chatId: ctx.from?.id,
+        chatId: chatId,
         soraUrl: soraUrl,
         apiUsed: 'vid7',
         fullDescription: fullDescription,
         title: result.title
       });
-      
+
+      await supabase.rpc('increment_success_count', { user_chat_id: chatId });
+
     } catch (error: any) {
-      await ctx.reply('❌ Ошибка при загрузке через VID7');
-    }
-  }
-
-  const cooldownResult = await checkButtonCooldown(chatId);
-  if (!cooldownResult.allowed) {
-    return await ctx.answerCbQuery(cooldownResult.message!, { show_alert: true });
-  }
-
-  try {
-    const videoId = callbackData.replace('retry:', '');
-    const soraUrl = `https://sora.chatgpt.com/p/s_${videoId}`;
-
-    await ctx.answerCbQuery('⏳ Обработка...');
-    
-    const statusMsg = await ctx.reply('⏳ Скачиваю альтернативную версию...');
-
-    const result = await processSoraVid7(soraUrl);
-
-    // Получаем размер
-    let fileSize = 'неизвестно';
-    try {
-      const headResponse = await fetch(result.videoUrl, { method: 'HEAD' });
-      const contentLength = headResponse.headers.get('content-length');
-      if (contentLength) {
-        const bytes = parseInt(contentLength);
-        fileSize = formatFileSize(bytes);
+      console.error('Callback error:', error);
+      
+      let errorMsg = t(lang, 'errGeneric');
+      if (error.message?.includes('not found')) {
+        errorMsg = t(lang, 'errVideoNotFound');
+      } else if (error.message?.includes('timeout')) {
+        errorMsg = t(lang, 'errTimeout');
       }
-    } catch (e) {
-      console.log('⚠️ Could not fetch file size');
-    }
-    
-    const { data: task } = await supabase
-      .from('tasks')
-      .insert({
+
+      await ctx.answerCbQuery(errorMsg, { show_alert: true });
+      await ctx.reply(
+        `${errorMsg}\n\n${t(lang, 'errPersists')}`,
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: t(lang, 'btnContactSupport'), url: 'https://t.me/feedbckbot' }
+            ]]
+          }
+        }
+      );
+
+      await supabase.from('tasks').insert({
         chat_id: chatId,
         sora_url: soraUrl,
-        api_used: result.apiUsed,
-        status: 'success',
-        result_url: result.videoUrl,
-        title: result.title
-      })
-      .select('id')
-      .single();
-
-    const baseUrl = process.env.WEBHOOK_URL?.replace('/api/webhook', '') || 'https://sora-bot-five.vercel.app';
-    const proxyUrl = task ? `${baseUrl}/api/video/${task.id}` : result.videoUrl;
-
-    await ctx.telegram.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
-
-    await ctx.replyWithVideo(
-      { url: proxyUrl },
-      { 
-        caption: `✅ Готово (альтернативная версия)\n📦 Размер: ${fileSize}\n\n⚠️ Если логотип остался,\n напишите в /support` 
-      }
-    );
-
-    // Постим в канал
-    await postVideoToChannel({
-      videoUrl: proxyUrl,
-      caption: result.title, // <- Было title, стало caption
-      chatId: chatId,
-      soraUrl: soraUrl,
-      apiUsed: result.apiUsed,
-      source: 'bot',
-      userId: chatId,
-      username: ctx.from.username
-    });
-
-    await supabase.rpc('increment_success_count', { user_chat_id: chatId });
-
-  } catch (error: any) {
-    console.error('Callback error:', error);
-    let errorMsg = '❌ Ошибка при скачивании';
-    
-    if (error.message?.includes('not found')) {
-      errorMsg = '❌ Видео не найдено';
-    } else if (error.message?.includes('timeout')) {
-      errorMsg = '❌ Превышено время ожидания';
+        api_used: 'vid7',
+        status: 'error',
+        error: error.message || 'Unknown error'
+      });
     }
-    
-    await ctx.answerCbQuery(errorMsg, { show_alert: true });
-    
-    await ctx.reply(
-      `${errorMsg}\n\n⚠️ Если проблема повторяется, обратитесь в техподдержку: @feedbckbot`,
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '💬 Техподдержка', url: 'https://t.me/feedbckbot' }
-          ]]
-        }
-      }
-    );
-    
-    await supabase.from('tasks').insert({
-      chat_id: chatId,
-      sora_url: `retry:${callbackData}`,
-      api_used: 'vid7',
-      status: 'error',
-      error: error.message || 'Unknown error'
-    });
   }
 });
 
@@ -323,8 +603,14 @@ bot.on('text', async (ctx) => {
   const chatId = ctx.from!.id;
   const text = ctx.message!.text;
 
+  if (text.startsWith('/')) {
+    return;
+  }
+
+  const lang = await getUserLanguage(chatId);
+
   const rate = await checkRateLimit(chatId);
-  if (!rate.allowed) return ctx.reply(rate.message!);
+  if (!rate.allowed) return ctx.reply(t(lang, 'errRateLimit'));
 
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const soraUrls = lines.filter(line =>
@@ -332,32 +618,40 @@ bot.on('text', async (ctx) => {
   );
 
   if (soraUrls.length === 0) {
-    return ctx.reply(ERROR_MESSAGES.INVALID_URL);
+    return ctx.reply(t(lang, 'errInvalidUrl'));
   }
 
   if (soraUrls.length > 5) {
-    return ctx.reply(
-      ERROR_MESSAGES.TOO_MANY_URLS.replace('{count}', soraUrls.length.toString())
-    );
+    return ctx.reply(t(lang, 'errTooManyUrls', { count: soraUrls.length.toString() }));
   }
 
   const uniqueUrls = [...new Set(soraUrls)];
 
+  const messageId = ctx.message!.message_id;
+  const cacheKey = `${chatId}:${messageId}`;
+  
+  const isProcessed = processedMessages.get(cacheKey);
+  if (isProcessed) {
+    console.log(`⚠️ Message ${messageId} already processed, skipping`);
+    return;
+  }
+  
+  processedMessages.set(cacheKey, Date.now());
+
   if (uniqueUrls.length === 1) {
     await processUrl(ctx, uniqueUrls[0]);
   } else {
-    await ctx.reply(`📦 Обрабатываю ${uniqueUrls.length} ссылок...`);
-    
-    // Обработка по очереди
+    await ctx.reply(t(lang, 'processingMultiple', { count: uniqueUrls.length.toString() }));
+
     for (let i = 0; i < uniqueUrls.length; i++) {
       try {
-        await processUrl(ctx, uniqueUrls[i], i + 1);
+        await processUrl(ctx, uniqueUrls[i], i + 1, uniqueUrls.length);
       } catch (e) {
         console.error(`Failed to process URL ${i+1}:`, e);
       }
       
       if (i < uniqueUrls.length - 1) {
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 3000));
       }
     }
   }
