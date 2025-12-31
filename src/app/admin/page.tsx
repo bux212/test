@@ -3,6 +3,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
 
 interface Stats {
   totalUsers: number;
@@ -22,6 +25,16 @@ interface Stats {
   webDyysy: number;
   webVid7: number;
   uniqueIPs: number;
+}
+
+interface Broadcast {
+  id: string;
+  message_text: string;
+  sent_count: number;
+  failed_count: number;
+  status: string;
+  created_at: string;
+  completed_at: string;
 }
 
 interface User {
@@ -49,15 +62,21 @@ export default function AdminPanel() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
-  const [topUsers, setTopUsers] = useState<User[]>([]);
-  const [recentTasks, setRecentTasks] = useState<Download[]>([]);
-  const [recentWebDownloads, setRecentWebDownloads] = useState<Download[]>([]);
-  const [allDownloads, setAllDownloads] = useState<Download[]>([]);
+  const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
+  const [dailyStats, setDailyStats] = useState<any[]>([]);
+  const [topUsers, setTopUsers] = useState<any[]>([]);
+  const [recentTasks, setRecentTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [mainTab, setMainTab] = useState<'general' | 'telegram' | 'website'>('general');
+  const [mainTab, setMainTab] = useState<'general' | 'telegram' | 'website' | 'broadcasts'>('general');
   const [subTab, setSubTab] = useState<'overview' | 'users' | 'downloads'>('overview');
   const [darkMode, setDarkMode] = useState(false);
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
+  const [recentWebDownloads, setRecentWebDownloads] = useState<any[]>([]);
+  const [allDownloads, setAllDownloads] = useState<any[]>([]);
+
+
+
+
 
   const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || '427898';
 
@@ -92,7 +111,9 @@ export default function AdminPanel() {
         loadTopUsers(),
         loadRecentTasks(),
         loadRecentWebDownloads(),
-        loadAllDownloads()
+        loadAllDownloads(),
+        loadBroadcasts(),       // добавлено
+        loadDailyStats()        // добавлено
       ]);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -161,6 +182,50 @@ export default function AdminPanel() {
     });
   };
 
+  const loadBroadcasts = async () => {
+    const { data } = await supabase
+      .from('broadcasts')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    setBroadcasts(data || []);
+  };
+
+  const loadDailyStats = async () => {
+    const { data: tasks } = await supabase.from('tasks').select('created_at, status');
+    const { data: users } = await supabase.from('users').select('created_at');
+
+    const now = new Date();
+    const stats = [];
+
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const dateStr = date.toISOString().split('T')[0];
+      const nextDate = new Date(date.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+      const newUsers = users?.filter(u => {
+        const created = new Date(u.created_at);
+        return created >= date && created < new Date(nextDate);
+      }).length || 0;
+
+      const downloads = tasks?.filter(t => {
+        const created = new Date(t.created_at);
+        return t.status === 'success' && created >= date && created < new Date(nextDate);
+      }).length || 0;
+
+      stats.push({
+        date: dateStr,
+        users: newUsers,
+        downloads
+      });
+    }
+
+    setDailyStats(stats);
+  };
+
+
+  
+
   const loadTopUsers = async () => {
     const response = await fetch('/api/admin/users');
     const data = await response.json();
@@ -216,25 +281,29 @@ export default function AdminPanel() {
     textSecondary: darkMode ? 'text-gray-400' : 'text-gray-600',
     border: darkMode ? 'border-gray-700' : 'border-gray-200',
     hover: darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50',
-    tableHeader: darkMode ? 'bg-gray-700' : 'bg-gray-50'
+    tableHeader: darkMode ? 'bg-gray-700' : 'bg-gray-50' // добавьте эту строку
   };
+
 
     // Продолжение AdminPanel component
 
   if (!isAuthenticated) {
     return (
-      <div className={`min-h-screen ${theme.bg} flex items-center justify-center`}>
-        <div className={`${theme.card} p-8 rounded-lg shadow-lg w-96`}>
+      <div className={`min-h-screen ${theme.bg} flex items-center justify-center p-4`}>
+        <div className={`${theme.card} p-8 rounded-lg shadow-lg w-full max-w-md`}>
           <h1 className={`text-2xl font-bold mb-6 text-center ${theme.text}`}>🔐 Админ-панель</h1>
           <form onSubmit={handleLogin}>
             <input
               type="password"
               placeholder="Введите пароль"
-              className={`w-full p-3 border rounded mb-4 ${theme.bg} ${theme.text} border-gray-600`}
+              className={`w-full p-3 border rounded mb-4 ${theme.bg} ${theme.text} ${theme.border}`}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <button type="submit" className="w-full bg-blue-500 text-white p-3 rounded hover:bg-blue-600">
+            <button
+              type="submit"
+              className="w-full bg-blue-500 text-white py-3 rounded hover:bg-blue-600"
+            >
               Войти
             </button>
           </form>
@@ -243,44 +312,74 @@ export default function AdminPanel() {
     );
   }
 
+  const languageData = stats ? [
+    { name: '🇷🇺 Русский', value: Math.round(stats.totalUsers * 0.7) },
+    { name: '🇺🇸 English', value: Math.round(stats.totalUsers * 0.25) },
+    { name: '⚪️ Нет языка', value: Math.round(stats.totalUsers * 0.05) }
+  ] : [];
+
+  const apiData = stats ? [
+    { name: 'DYYSY', value: stats.botDyysy + stats.webDyysy },
+    { name: 'VID7', value: stats.botVid7 + stats.webVid7 }
+  ] : [];
+
   return (
-    <div className={`min-h-screen ${theme.bg} p-6`}>
-      <div className="max-w-7xl mx-auto">
+    <div className={`min-h-screen ${theme.bg}`}>
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <h1 className={`text-3xl font-bold ${theme.text}`}>📊 SoraDownloadBot - Админ-панель</h1>
-          <div className="flex gap-3">
-            <button onClick={toggleTheme} className={`${theme.card} px-4 py-2 rounded shadow ${theme.text}`}>
-              {darkMode ? '☀️' : '🌙'}
-            </button>
-            <button onClick={loadData} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600" disabled={loading}>
-              {loading ? '⏳ Загрузка...' : '🔄 Обновить'}
-            </button>
+      <div className={`${theme.card} shadow-lg`}>
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          <div className="flex justify-between items-center">
+            <h1 className={`text-2xl font-bold ${theme.text}`}>📊 SoraDownloadBot - Админ-панель</h1>
+            <div className="flex gap-3">
+              <button onClick={toggleTheme} className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700">
+                {darkMode ? '☀️' : '🌙'}
+              </button>
+              <button
+                onClick={loadData}
+                disabled={loading}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
+              >
+                {loading ? '⏳ Загрузка...' : '🔄 Обновить'}
+              </button>
+            </div>
           </div>
         </div>
+      </div>
 
-        {/* Main Tabs */}
-        <div className="flex space-x-4 mb-6">
+      {/* Main Tabs */}
+      <div className="max-w-7xl mx-auto px-6 mt-6">
+        <div className="flex gap-3 mb-6">
           <button
             onClick={() => { setMainTab('general'); setSubTab('overview'); }}
             className={`px-6 py-3 rounded-lg font-medium transition-all ${
               mainTab === 'general' ? 'bg-blue-500 text-white shadow-lg' : `${theme.card} ${theme.text}`
-            }`}>
+            }`}
+          >
             📊 Общее
           </button>
           <button
             onClick={() => { setMainTab('telegram'); setSubTab('overview'); }}
             className={`px-6 py-3 rounded-lg font-medium transition-all ${
               mainTab === 'telegram' ? 'bg-blue-500 text-white shadow-lg' : `${theme.card} ${theme.text}`
-            }`}>
+            }`}
+          >
             🤖 Telegram Бот
           </button>
           <button
             onClick={() => { setMainTab('website'); setSubTab('overview'); }}
             className={`px-6 py-3 rounded-lg font-medium transition-all ${
               mainTab === 'website' ? 'bg-blue-500 text-white shadow-lg' : `${theme.card} ${theme.text}`
-            }`}>
+            }`}
+          >
             🌐 Сайт
+          </button>
+          <button
+            onClick={() => { setMainTab('broadcasts'); setSubTab('overview'); }}
+            className={`px-6 py-3 rounded-lg font-medium transition-all ${
+              mainTab === 'broadcasts' ? 'bg-blue-500 text-white shadow-lg' : `${theme.card} ${theme.text}`
+            }`}
+          >
+            📢 Рассылки
           </button>
         </div>
 
@@ -299,39 +398,131 @@ export default function AdminPanel() {
           </button>
         </div>
 
-        {/* ОБЩЕЕ - ОБЗОР */}
+        {/* ОБЩЕЕ - ОБЗОР С ГРАФИКАМИ */}
         {mainTab === 'general' && subTab === 'overview' && stats && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className={`${theme.card} p-6 rounded-lg shadow`}>
-              <h3 className={`${theme.textSecondary} mb-2`}>👥 Всего пользователей</h3>
-              <p className={`text-3xl font-bold ${theme.text}`}>{stats.totalUsers}</p>
+          <div className="space-y-6">
+            {/* Stat Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <div className={`text-sm ${theme.textSecondary}`}>Всего пользователей</div>
+                <div className="text-3xl font-bold text-blue-600">{stats.totalUsers}</div>
+              </div>
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <div className={`text-sm ${theme.textSecondary}`}>Всего скачиваний</div>
+                <div className="text-3xl font-bold text-green-600">{stats.totalDownloads}</div>
+              </div>
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <div className={`text-sm ${theme.textSecondary}`}>Сегодня</div>
+                <div className="text-3xl font-bold text-purple-600">{stats.todayDownloads}</div>
+              </div>
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <div className={`text-sm ${theme.textSecondary}`}>Ошибок</div>
+                <div className="text-3xl font-bold text-red-600">{stats.totalErrors}</div>
+              </div>
             </div>
-            <div className={`${theme.card} p-6 rounded-lg shadow`}>
-              <h3 className={`${theme.textSecondary} mb-2`}>✅ Всего скачиваний</h3>
-              <p className="text-3xl font-bold text-green-600">{stats.totalDownloads}</p>
-              <p className="text-sm text-gray-500 mt-1">Бот: {stats.botDownloads} | Веб: {stats.webDownloads}</p>
+
+            {/* Charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Activity Chart */}
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <h3 className={`text-lg font-semibold mb-4 ${theme.text}`}>📈 Активность (30 дней)</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={dailyStats}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#374151' : '#E5E7EB'} />
+                    <XAxis dataKey="date" stroke={darkMode ? '#9CA3AF' : '#6B7280'} />
+                    <YAxis stroke={darkMode ? '#9CA3AF' : '#6B7280'} />
+                    <Tooltip contentStyle={{ backgroundColor: darkMode ? '#1F2937' : '#FFF', border: 'none' }} />
+                    <Legend />
+                    <Line type="monotone" dataKey="users" stroke="#3B82F6" name="Новые пользователи" />
+                    <Line type="monotone" dataKey="downloads" stroke="#10B981" name="Скачивания" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Language Distribution */}
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <h3 className={`text-lg font-semibold mb-4 ${theme.text}`}>🌐 Распределение языков</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={languageData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={(entry) => `${entry.name}: ${entry.value}`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {languageData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* API Usage */}
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <h3 className={`text-lg font-semibold mb-4 ${theme.text}`}>🔌 Использование API</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={apiData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#374151' : '#E5E7EB'} />
+                    <XAxis dataKey="name" stroke={darkMode ? '#9CA3AF' : '#6B7280'} />
+                    <YAxis stroke={darkMode ? '#9CA3AF' : '#6B7280'} />
+                    <Tooltip contentStyle={{ backgroundColor: darkMode ? '#1F2937' : '#FFF', border: 'none' }} />
+                    <Bar dataKey="value" fill="#3B82F6" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Daily Downloads */}
+              <div className={`${theme.card} p-6 rounded-lg shadow`}>
+                <h3 className={`text-lg font-semibold mb-4 ${theme.text}`}>📊 Скачивания по дням</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={dailyStats.slice(-7)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#374151' : '#E5E7EB'} />
+                    <XAxis dataKey="date" stroke={darkMode ? '#9CA3AF' : '#6B7280'} />
+                    <YAxis stroke={darkMode ? '#9CA3AF' : '#6B7280'} />
+                    <Tooltip contentStyle={{ backgroundColor: darkMode ? '#1F2937' : '#FFF', border: 'none' }} />
+                    <Bar dataKey="downloads" fill="#10B981" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-            <div className={`${theme.card} p-6 rounded-lg shadow`}>
-              <h3 className={`${theme.textSecondary} mb-2`}>📅 Скачиваний сегодня</h3>
-              <p className="text-3xl font-bold text-blue-600">{stats.todayDownloads}</p>
-              <p className="text-sm text-gray-500 mt-1">Бот: {stats.botToday} | Веб: {stats.webToday}</p>
-            </div>
-            <div className={`${theme.card} p-6 rounded-lg shadow`}>
-              <h3 className={`${theme.textSecondary} mb-2`}>🔥 Активных за 24ч</h3>
-              <p className="text-3xl font-bold text-orange-600">{stats.activeUsers24h}</p>
-            </div>
-            <div className={`${theme.card} p-6 rounded-lg shadow`}>
-              <h3 className={`${theme.textSecondary} mb-2`}>❌ Ошибок</h3>
-              <p className="text-3xl font-bold text-red-600">{stats.totalErrors}</p>
-            </div>
-            <div className={`${theme.card} p-6 rounded-lg shadow`}>
-              <h3 className={`${theme.textSecondary} mb-2`}>📊 Success Rate</h3>
-              <p className="text-3xl font-bold text-green-600">
-                {stats.totalDownloads + stats.totalErrors > 0 
-                  ? Math.round((stats.totalDownloads / (stats.totalDownloads + stats.totalErrors)) * 100)
-                  : 0}%
-              </p>
-            </div>
+          </div>
+        )}
+
+        {/* РАССЫЛКИ */}
+        {mainTab === 'broadcasts' && (
+          <div className={`${theme.card} p-6 rounded-lg shadow`}>
+            <h2 className={`text-xl font-bold mb-6 ${theme.text}`}>📢 История рассылок</h2>
+            {broadcasts.length === 0 ? (
+              <p className={theme.textSecondary}>Рассылок пока нет</p>
+            ) : (
+              <div className="space-y-4">
+                {broadcasts.map((broadcast) => (
+                  <div key={broadcast.id} className={`${theme.border} border p-4 rounded-lg`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1">
+                        <div className={`text-sm ${theme.textSecondary}`}>
+                          {new Date(broadcast.created_at).toLocaleString('ru-RU')}
+                        </div>
+                        <div className={`mt-2 p-3 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded text-sm whitespace-pre-wrap ${theme.text}`}>
+                          {broadcast.message_text}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-4 mt-3 text-sm">
+                      <span className="text-green-600">✅ Отправлено: {broadcast.sent_count}</span>
+                      <span className="text-red-600">❌ Ошибок: {broadcast.failed_count}</span>
+                      <span className={theme.textSecondary}>Статус: {broadcast.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

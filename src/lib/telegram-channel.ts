@@ -16,8 +16,53 @@ interface PostToChannelParams {
   title?: string;
 }
 
-function formatCaption(data: PostToChannelParams): string {
-  const { fileSize, username, apiUsed, fullDescription } = data;
+async function getUsernameLink(chatId?: number, username?: string): Promise<string> {
+  if (!chatId || chatId === 0) {
+    return '🌐 Website User';
+  }
+
+  try {
+    // Получаем информацию о пользователе через Telegram API
+    const userInfo = await bot.telegram.getChat(chatId);
+    
+    // Проверяем, есть ли у пользователя username
+    if ('username' in userInfo && userInfo.username) {
+      const realUsername = userInfo.username;
+      // Используем MarkdownV2 синтаксис для создания кликабельной ссылки
+      return `[${realUsername}](https://t.me/${realUsername})`;
+    }
+    
+    // Если username нет, используем имя и фамилию с ссылкой на профиль
+    let displayName = '';
+    if ('first_name' in userInfo) {
+      displayName = userInfo.first_name;
+      if ('last_name' in userInfo && userInfo.last_name) {
+        displayName += ` ${userInfo.last_name}`;
+      }
+    }
+    
+    if (displayName) {
+      // Ссылка на профиль по chat_id (всегда работает)
+      return `[${displayName}](tg://user?id=${chatId})`;
+    }
+    
+    // Fallback - просто ID
+    return `User ID: ${chatId}`;
+    
+  } catch (error) {
+    console.error('Error getting user info:', error);
+    
+    // Если не удалось получить инфо, используем username из параметров
+    if (username) {
+      return `[${username}](https://t.me/${username})`;
+    }
+    
+    return `User ID: ${chatId}`;
+  }
+}
+
+function formatCaption(data: PostToChannelParams, userLink: string): string {
+  const { fileSize, apiUsed, fullDescription } = data;
   
   // Определяем источник
   let sourceEmoji = '';
@@ -25,10 +70,10 @@ function formatCaption(data: PostToChannelParams): string {
   
   if (apiUsed === 'dyysy') {
     sourceEmoji = '🔵';
-    sourceName = 'Основное';
+    sourceName = 'DYYSY API';
   } else if (apiUsed === 'vid7') {
     sourceEmoji = '🟣';
-    sourceName = 'Резервное';
+    sourceName = 'VID7 API';
   } else if (apiUsed === 'web') {
     sourceEmoji = '🌐';
     sourceName = 'Website';
@@ -37,12 +82,8 @@ function formatCaption(data: PostToChannelParams): string {
   // Формируем caption
   let caption = '';
   
-  // Пользователь (если есть)
-  if (username) {
-    caption += `👤: ${username} (https://t.me/${username})\n`;
-  } else if (apiUsed === 'web') {
-    caption += `👤: Website User\n`;
-  }
+  // Пользователь с кликабельной ссылкой
+  caption += `👤: ${userLink}\n`;
   
   // Размер файла
   if (fileSize) {
@@ -93,10 +134,12 @@ export async function postVideoToChannel(params: PostToChannelParams): Promise<v
       console.log(`📝 Can post messages flag: ${chatMember.can_post_messages}`);
     }
 
-    const caption = formatCaption(params);
+    // Получаем правильную ссылку на пользователя
+    const userLink = await getUsernameLink(params.chatId, params.username);
+    const caption = formatCaption(params, userLink);
     const { fullDescription } = params;
 
-    // Отправляем видео с caption
+    // Отправляем видео с caption (используем Markdown для корректного отображения ссылок)
     const message = await bot.telegram.sendVideo(parseInt(CHANNEL_ID), params.videoUrl, {
       caption,
       parse_mode: 'Markdown'
@@ -106,12 +149,12 @@ export async function postVideoToChannel(params: PostToChannelParams): Promise<v
 
     // Если описание больше 900 символов, отправляем вторым сообщением
     if (fullDescription && fullDescription.length > 900) {
-      await bot.telegram.sendMessage(parseInt(CHANNEL_ID), 
+      await bot.telegram.sendMessage(
+        parseInt(CHANNEL_ID), 
         `🎬 Полное описание:\n\`\`\`\n${fullDescription}\n\`\`\``,
         { 
           parse_mode: 'Markdown',
           reply_parameters: { message_id: message.message_id }
-
         }
       );
       console.log('✅ Posted full description as reply');

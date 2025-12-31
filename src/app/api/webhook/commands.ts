@@ -8,6 +8,37 @@ import { postVideoToChannel } from '@/lib/telegram-channel';
 import { extractFullDescription } from '@/lib/sorapure-downloader';
 import { t, getUserLanguage, setUserLanguage, type Language } from '@/lib/i18n';
 
+async function ensureUserExists(chatId: number, username?: string): Promise<Language> {
+  // Проверяем, есть ли пользователь
+  const { data: existingUser } = await supabase
+    .from('users')
+    .select('language, chat_id')
+    .eq('chat_id', chatId)
+    .single();
+
+  if (existingUser) {
+    // Пользователь существует
+    return (existingUser.language as Language) || 'ru';
+  }
+
+  // Новый пользователь - определяем язык по language_code из Telegram
+  const defaultLang: Language = 'ru'; // можно использовать ctx.from.language_code === 'ru' ? 'ru' : 'en'
+
+  // Создаём пользователя с языком по умолчанию
+  await supabase
+    .from('users')
+    .insert({
+      chat_id: chatId,
+      username: username || null,
+      language: defaultLang,
+      created_at: new Date().toISOString()
+    });
+
+  console.log(`✅ Auto-created user ${chatId} with language: ${defaultLang}`);
+
+  return defaultLang;
+}
+
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '0');
 // Дедупликация
 const processedMessages = new Map<string, number>();
@@ -37,9 +68,12 @@ bot.command('start', async (ctx) => {
   // Проверяем, есть ли уже язык у пользователя
   const { data: existingUser } = await supabase
     .from('users')
-    .select('language')
+    .select('language, created_at')
     .eq('chat_id', chatId)
     .single();
+
+    const isOldUser = existingUser && 
+      new Date(existingUser.created_at) < new Date('2025-12-29'); // дата перехода на нового бота
   
   if (!existingUser || !existingUser.language) {
     // Новый пользователь - показываем выбор языка
@@ -51,6 +85,19 @@ bot.command('start', async (ctx) => {
         language: null, // Язык ещё не выбран
         created_at: new Date().toISOString()
       }, { onConflict: 'chat_id' });
+
+    // Показываем уведомление о миграции для старых пользователей
+    let welcomeText = '🌐 Please select your language / Пожалуйста, выберите язык:';
+    
+    if (isOldUser) {
+      welcomeText = 
+        '🔄 *Бот был обновлён!* / *Bot has been updated!*\n\n' +
+        '✨ Новые возможности / New features:\n' +
+        '• 🌐 Мультиязычность / Multi-language\n' +
+        '• ⚡️ Быстрее и стабильнее / Faster & more stable\n' +
+        '• 📊 Улучшенная статистика / Better stats\n\n' +
+        '🌐 Выберите язык / Select language:';
+    }
 
     return await ctx.reply(
       '🌐 Please select your language / Пожалуйста, выберите язык:',
@@ -607,7 +654,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  const lang = await getUserLanguage(chatId);
+  const lang = await ensureUserExists(chatId, ctx.from!.username);
 
   const rate = await checkRateLimit(chatId);
   if (!rate.allowed) return ctx.reply(t(lang, 'errRateLimit'));
@@ -626,7 +673,6 @@ bot.on('text', async (ctx) => {
   }
 
   const uniqueUrls = [...new Set(soraUrls)];
-
   const messageId = ctx.message!.message_id;
   const cacheKey = `${chatId}:${messageId}`;
   
