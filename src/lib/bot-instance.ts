@@ -8,4 +8,3 @@ if (!BOT_TOKEN) {
 }
 
 export const bot = new Telegraf(BOT_TOKEN);
-

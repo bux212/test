@@ -68,7 +68,12 @@ export const translations = {
     
     // Рассылка
     broadcastSent: '✅ Рассылка отправлена {sent} пользователям',
-    broadcastFailed: '❌ Не удалось отправить {failed} пользователям'
+    broadcastFailed: '❌ Не удалось отправить {failed} пользователям',
+    btnSettings: '⚙️ Настройки',
+    settingsTitle: '⚙️ *Настройки*',
+    showVideoText: 'Описание видео',
+    settingsUpdated: '✅ Настройки обновлены!',
+    backToMenu: '◀️ Назад',
   },
   
   en: {
@@ -137,7 +142,12 @@ export const translations = {
     
     // Broadcast
     broadcastSent: '✅ Broadcast sent to {sent} users',
-    broadcastFailed: '❌ Failed to send to {failed} users'
+    broadcastFailed: '❌ Failed to send to {failed} users',
+    btnSettings: '⚙️ Settings',
+    settingsTitle: '⚙️ *Settings*',
+    showVideoText: 'Video description',
+    settingsUpdated: '✅ Settings updated!',
+    backToMenu: '◀️ Back',
   }
 };
 

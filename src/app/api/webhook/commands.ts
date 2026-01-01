@@ -1,4 +1,6 @@
 // src/app/api/webhook/commands.ts
+console.log('🚀 [INIT] commands.ts is being executed');
+
 import { bot } from '@/lib/bot-instance';
 import { processUrl, ERROR_MESSAGES } from '@/lib/bot/handlers';
 import { checkRateLimit, checkButtonCooldown } from '@/lib/bot/rate-limit';
@@ -8,6 +10,8 @@ import { postVideoToChannel } from '@/lib/telegram-channel';
 import { extractFullDescription } from '@/lib/sorapure-downloader';
 import { t, getUserLanguage, setUserLanguage, type Language } from '@/lib/i18n';
 
+console.log('🤖 [INIT] Bot instance check:', bot ? 'OK' : 'MISSING');
+console.log('👂 [INIT] Registering callback_query handler...');
 async function ensureUserExists(chatId: number, username?: string): Promise<Language> {
   // Проверяем, есть ли пользователь
   const { data: existingUser } = await supabase
@@ -134,6 +138,7 @@ bot.command('start', async (ctx) => {
             { text: t(lang, 'btnStats'), callback_data: 'stats' }
           ],
           [
+            { text: t(lang, 'btnSettings'), callback_data: 'settings' },
             { text: t(lang, 'btnLanguage'), callback_data: 'change_lang' }
           ]
         ]
@@ -443,219 +448,244 @@ bot.command('broadcast', async (ctx) => {
 });
 
 
+// Регистрация обработчика callback_query
 bot.on('callback_query', async (ctx) => {
-  const callbackData = (ctx.callbackQuery as any).data;
-  const chatId = ctx.from.id;
-
-  console.log('Received callback_query:', callbackData);
-
-  // Обработка выбора языка
-  if (callbackData?.startsWith('lang:')) {
-    const lang = callbackData.split(':')[1] as Language;
-    await setUserLanguage(chatId, lang);
+  console.log('🔔 [CALLBACK] ========== EVENT FIRED ==========');
+  
+  try {
+    const callbackData = (ctx.callbackQuery as any).data;
+    const chatId = ctx.from.id;
     
-    await ctx.answerCbQuery(t(lang, 'languageChanged'));
-    
-    // Показываем приветствие на выбранном языке
-    await ctx.reply(
-      `${t(lang, 'welcome')}\n\n` +
-      `${t(lang, 'howToUse')}\n` +
-      `${t(lang, 'step1')}\n` +
-      `${t(lang, 'step2')}\n` +
-      `${t(lang, 'step3')}\n\n` +
-      `${t(lang, 'multipleLinks')}\n\n` +
-      `${t(lang, 'limits')}\n\n` +
-      `${t(lang, 'questions')} /support`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: t(lang, 'btnSupport'), url: 'https://t.me/feedbckbot' },
-              { text: t(lang, 'btnStats'), callback_data: 'stats' }
-            ],
-            [
-              { text: t(lang, 'btnLanguage'), callback_data: 'change_lang' }
-            ]
-          ]
-        }
-      }
-    );
-    return;
-  }
+    console.log('📞 [CALLBACK] Data:', callbackData);
+    console.log('👤 [CALLBACK] User ID:', chatId);
 
-  // Обработка кнопки смены языка
-  if (callbackData === 'change_lang') {
+    // КРИТИЧНО: Сразу подтверждаем получение callback
     await ctx.answerCbQuery();
-    await ctx.reply(
-      '🌐 Select language / Выберите язык:',
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '🇺🇸 English', callback_data: 'lang:en' },
-              { text: '🇷🇺 Русский', callback_data: 'lang:ru' }
-            ]
-          ]
-        }
-      }
-    );
-    return;
-  }
+    console.log('✅ [CALLBACK] answerCbQuery sent');
 
-  const lang = await getUserLanguage(chatId);
-
-  // Обработка кнопки "Статистика"
-  if (callbackData === 'stats') {
-    await ctx.answerCbQuery();
-    
-    try {
-      const { data: tasks } = await supabase
-        .from('tasks')
-        .select('api_used, status')
-        .eq('chat_id', chatId);
-
-      const { data: user } = await supabase
-        .from('users')
-        .select('created_at')
-        .eq('chat_id', chatId)
-        .single();
-
-      const successTasks = tasks?.filter(t => t.status === 'success') || [];
-      const totalDownloads = successTasks.length;
-      const dyysyCount = tasks?.filter(t => t.api_used === 'dyysy' && t.status === 'success').length || 0;
-      const vid7Count = tasks?.filter(t => t.api_used === 'vid7' && t.status === 'success').length || 0;
-      const errorCount = tasks?.filter(t => t.status === 'error').length || 0;
-      const memberSince = user?.created_at 
-        ? new Date(user.created_at).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US') 
-        : (lang === 'ru' ? 'Сегодня' : 'Today');
-
-      await ctx.reply(
-        `${t(lang, 'yourStats')}\n\n` +
-        `${t(lang, 'totalDownloaded', { count: totalDownloads })}\n` +
-        `${t(lang, 'mainApi', { count: dyysyCount })}\n` +
-        `${t(lang, 'reserveApi', { count: vid7Count })}\n` +
-        `${t(lang, 'errors', { count: errorCount })}\n\n` +
-        `${t(lang, 'memberSince', { date: memberSince })}`,
-        { parse_mode: 'Markdown' }
-      );
-    } catch (error) {
-      console.error('Stats error:', error);
-      await ctx.answerCbQuery(t(lang, 'errStats'));
-      await ctx.reply(t(lang, 'errStats'));
-    }
-    return;
-  }
-
-  // Обработка кнопки "Альтернативная версия" (retry:)
-  if (callbackData?.startsWith('retry:')) {
-    const cooldownResult = await checkButtonCooldown(chatId);
-    if (!cooldownResult.allowed) {
-      return await ctx.answerCbQuery(cooldownResult.message!, { show_alert: true });
-    }
-
-    const videoId = callbackData.split(':')[1];
-    const soraUrl = `https://sora.chatgpt.com/p/s_${videoId}`;
-    
-    await ctx.answerCbQuery(t(lang, 'processing'));
-    const statusMsg = await ctx.reply(t(lang, 'downloading'));
-
-    try {
-      const result = await processSoraVid7(soraUrl);
-      const fullDescription = extractFullDescription(result.title);
-
-      let fileSize = 'unknown';
-      try {
-        const headResponse = await fetch(result.videoUrl, { method: 'HEAD' });
-        const contentLength = headResponse.headers.get('content-length');
-        if (contentLength) {
-          const bytes = parseInt(contentLength);
-          fileSize = formatFileSize(bytes);
-        }
-      } catch (e) {
-        console.log('⚠️ Could not fetch file size');
-      }
-
-      const { data: task } = await supabase
-        .from('tasks')
-        .insert({
-          chat_id: chatId,
-          sora_url: soraUrl,
-          api_used: result.apiUsed,
-          status: 'success',
-          result_url: result.videoUrl,
-          title: result.title
-        })
-        .select('id')
-        .single();
-
-      const baseUrl = process.env.WEBHOOK_URL?.replace('/api/webhook', '') || 'https://sora-bot-five.vercel.app';
-      const proxyUrl = task ? `${baseUrl}/api/video/${task.id}` : result.videoUrl;
-
-      await ctx.telegram.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
-
-      await ctx.replyWithVideo(
-        { url: proxyUrl },
-        {
-          caption: `${t(lang, 'doneAlt')}\n${t(lang, 'fileSize', { size: fileSize })}\n\n${t(lang, 'watermarkWarning')}`
-        }
-      );
-
-      await postVideoToChannel({
-        videoUrl: proxyUrl,
-        fileSize: fileSize,
-        username: ctx.from?.username,
-        chatId: chatId,
-        soraUrl: soraUrl,
-        apiUsed: 'vid7',
-        fullDescription: fullDescription,
-        title: result.title
-      });
-
-      await supabase.rpc('increment_success_count', { user_chat_id: chatId });
-
-    } catch (error: any) {
-      console.error('Callback error:', error);
+    // 1. Обработка выбора языка
+    if (callbackData?.startsWith('lang:')) {
+      console.log('🌐 [CALLBACK] Language selection detected');
+      const lang = callbackData.split(':')[1] as Language;
+      await setUserLanguage(chatId, lang);
       
-      let errorMsg = t(lang, 'errGeneric');
-      if (error.message?.includes('not found')) {
-        errorMsg = t(lang, 'errVideoNotFound');
-      } else if (error.message?.includes('timeout')) {
-        errorMsg = t(lang, 'errTimeout');
-      }
-
-      await ctx.answerCbQuery(errorMsg, { show_alert: true });
       await ctx.reply(
-        `${errorMsg}\n\n${t(lang, 'errPersists')}`,
+        `${t(lang, 'welcome')}\n\n` +
+        `${t(lang, 'howToUse')}\n` +
+        `${t(lang, 'step1')}\n` +
+        `${t(lang, 'step2')}\n` +
+        `${t(lang, 'step3')}\n\n` +
+        `${t(lang, 'multipleLinks')}\n\n` +
+        `${t(lang, 'limits')}\n\n` +
+        `${t(lang, 'questions')} /support`,
         {
           reply_markup: {
-            inline_keyboard: [[
-              { text: t(lang, 'btnContactSupport'), url: 'https://t.me/feedbckbot' }
-            ]]
+            inline_keyboard: [
+              [
+                { text: t(lang, 'btnSupport'), url: 'https://t.me/feedbckbot' },
+                { text: t(lang, 'btnStats'), callback_data: 'stats' }
+              ],
+              [
+                { text: t(lang, 'btnLanguage'), callback_data: 'change_lang' }
+              ]
+            ]
           }
         }
       );
-
-      await supabase.from('tasks').insert({
-        chat_id: chatId,
-        sora_url: soraUrl,
-        api_used: 'vid7',
-        status: 'error',
-        error: error.message || 'Unknown error'
-      });
+      console.log('✅ [CALLBACK] Language changed to:', lang);
+      return;
     }
+
+    // 2. Обработка кнопки смены языка
+    if (callbackData === 'change_lang') {
+      console.log('🔄 [CALLBACK] Change language button pressed');
+      await ctx.reply(
+        '🌐 Select language / Выберите язык:',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '🇺🇸 English', callback_data: 'lang:en' },
+                { text: '🇷🇺 Русский', callback_data: 'lang:ru' }
+              ]
+            ]
+          }
+        }
+      );
+      console.log('✅ [CALLBACK] Language menu sent');
+      return;
+    }
+
+    const lang = await getUserLanguage(chatId);
+
+    // 3. Обработка кнопки "Статистика"
+    if (callbackData === 'stats') {
+      console.log('📊 [CALLBACK] Stats button pressed');
+      try {
+        const { data: tasks } = await supabase
+          .from('tasks')
+          .select('api_used, status')
+          .eq('chat_id', chatId);
+
+        const { data: user } = await supabase
+          .from('users')
+          .select('created_at')
+          .eq('chat_id', chatId)
+          .single();
+
+        const successTasks = tasks?.filter(t => t.status === 'success') || [];
+        const totalDownloads = successTasks.length;
+        const dyysyCount = tasks?.filter(t => t.api_used === 'dyysy' && t.status === 'success').length || 0;
+        const vid7Count = tasks?.filter(t => t.api_used === 'vid7' && t.status === 'success').length || 0;
+        const errorCount = tasks?.filter(t => t.status === 'error').length || 0;
+
+        const memberSince = user?.created_at
+          ? new Date(user.created_at).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US')
+          : (lang === 'ru' ? 'Сегодня' : 'Today');
+
+        await ctx.reply(
+          `${t(lang, 'yourStats')}\n\n` +
+          `${t(lang, 'totalDownloaded', { count: totalDownloads })}\n` +
+          `${t(lang, 'mainApi', { count: dyysyCount })}\n` +
+          `${t(lang, 'reserveApi', { count: vid7Count })}\n` +
+          `${t(lang, 'errors', { count: errorCount })}\n\n` +
+          `${t(lang, 'memberSince', { date: memberSince })}`,
+          { parse_mode: 'Markdown' }
+        );
+        console.log('✅ [CALLBACK] Stats sent successfully');
+      } catch (error) {
+        console.error('❌ [CALLBACK] Stats error:', error);
+        await ctx.reply(t(lang, 'errStats'));
+      }
+      return;
+    }
+
+    // 4. Обработка кнопки "Альтернативная версия" (retry:)
+    if (callbackData?.startsWith('retry:')) {
+      console.log('🔄 [CALLBACK] Retry button pressed');
+      
+      const cooldownResult = await checkButtonCooldown(chatId);
+      if (!cooldownResult.allowed) {
+        console.log('⏱️ [CALLBACK] Cooldown active, rejecting');
+        await ctx.answerCbQuery(cooldownResult.message!, { show_alert: true });
+        return;
+      }
+
+      const videoId = callbackData.split(':')[1];
+      const soraUrl = `https://sora.chatgpt.com/p/s_${videoId}`;
+      console.log('📥 [CALLBACK] Downloading video:', videoId);
+
+      const statusMsg = await ctx.reply(t(lang, 'downloading'));
+
+      try {
+        const result = await processSoraVid7(soraUrl);
+        const fullDescription = extractFullDescription(result.title);
+
+        let fileSize = 'unknown';
+        try {
+          const headResponse = await fetch(result.videoUrl, { method: 'HEAD' });
+          const contentLength = headResponse.headers.get('content-length');
+          if (contentLength) {
+            const bytes = parseInt(contentLength);
+            fileSize = formatFileSize(bytes);
+          }
+        } catch (e) {
+          console.log('⚠️ Could not fetch file size');
+        }
+
+        const { data: task } = await supabase
+          .from('tasks')
+          .insert({
+            chat_id: chatId,
+            sora_url: soraUrl,
+            api_used: result.apiUsed,
+            status: 'success',
+            result_url: result.videoUrl,
+            title: result.title
+          })
+          .select('id')
+          .single();
+
+        const baseUrl = process.env.WEBHOOK_URL?.replace('/api/webhook', '') || 'https://sora-bot-five.vercel.app';
+        const proxyUrl = task ? `${baseUrl}/api/video/${task.id}` : result.videoUrl;
+
+        await ctx.telegram.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+
+        await ctx.replyWithVideo(
+          { url: proxyUrl },
+          {
+            caption: `${t(lang, 'doneAlt')}\n${t(lang, 'fileSize', { size: fileSize })}\n\n${t(lang, 'watermarkWarning')}`
+          }
+        );
+
+        await postVideoToChannel({
+          videoUrl: proxyUrl,
+          fileSize: fileSize,
+          username: ctx.from?.username,
+          chatId: chatId,
+          soraUrl: soraUrl,
+          apiUsed: 'vid7',
+          fullDescription: fullDescription,
+          title: result.title
+        });
+
+        await supabase.rpc('increment_success_count', { user_chat_id: chatId });
+        console.log('✅ [CALLBACK] Video sent successfully');
+
+      } catch (error: any) {
+        console.error('❌ [CALLBACK] Retry error:', error);
+        
+        let errorMsg = t(lang, 'errGeneric');
+        if (error.message?.includes('not found')) {
+          errorMsg = t(lang, 'errVideoNotFound');
+        } else if (error.message?.includes('timeout')) {
+          errorMsg = t(lang, 'errTimeout');
+        }
+
+        await ctx.reply(
+          `${errorMsg}\n\n${t(lang, 'errPersists')}`,
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: t(lang, 'btnContactSupport'), url: 'https://t.me/feedbckbot' }
+              ]]
+            }
+          }
+        );
+
+        await supabase.from('tasks').insert({
+          chat_id: chatId,
+          sora_url: soraUrl,
+          api_used: 'vid7',
+          status: 'error',
+          error: error.message || 'Unknown error'
+        });
+      }
+      return;
+    }
+
+    // 5. Неизвестный callback
+    console.log('⚠️ [CALLBACK] Unknown callback_data:', callbackData);
+    
+  } catch (error: any) {
+    console.error('❌ [CALLBACK] Handler error:', error);
   }
 });
+
+console.log('✅ [INIT] callback_query handler registered');
+
+
 
 bot.on('text', async (ctx) => {
   const chatId = ctx.from!.id;
   const text = ctx.message!.text;
 
-  if (text.startsWith('/')) {
-    return;
-  }
-
-  const lang = await ensureUserExists(chatId, ctx.from!.username);
-
+  console.log('📝 [TEXT] Received text message:', text);
+  
+  // Игнорируем команды и ссылки Sora
+  if (text.startsWith('/') || text.match(/sora\.chatgpt\.com/i)) {
+    const lang = await ensureUserExists(chatId, ctx.from!.username);
+    
   const rate = await checkRateLimit(chatId);
   if (!rate.allowed) return ctx.reply(t(lang, 'errRateLimit'));
 
