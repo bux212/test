@@ -72,7 +72,7 @@ bot.command('start', async (ctx) => {
   // Проверяем, есть ли уже язык у пользователя
   const { data: existingUser } = await supabase
     .from('users')
-    .select('language, created_at')
+    .select('language, created_at, show_video_text')
     .eq('chat_id', chatId)
     .single();
 
@@ -87,6 +87,7 @@ bot.command('start', async (ctx) => {
         chat_id: chatId,
         username: username,
         language: null, // Язык ещё не выбран
+        show_video_text: false, // По умолчанию выключено
         created_at: new Date().toISOString()
       }, { onConflict: 'chat_id' });
 
@@ -104,7 +105,7 @@ bot.command('start', async (ctx) => {
     }
 
     return await ctx.reply(
-      '🌐 Please select your language / Пожалуйста, выберите язык:',
+      welcomeText,
       {
         reply_markup: {
           inline_keyboard: [
@@ -120,6 +121,8 @@ bot.command('start', async (ctx) => {
 
  // Язык уже выбран - показываем приветствие
   const lang = (existingUser.language as Language) || 'ru';
+  const showVideoText = existingUser.show_video_text ?? false;
+  const langFlag = lang === 'ru' ? '🇷🇺' : '🇺🇸';
 
   await ctx.reply(
     `${t(lang, 'welcome')}\n\n` +
@@ -129,6 +132,7 @@ bot.command('start', async (ctx) => {
     `${t(lang, 'step3')}\n\n` +
     `${t(lang, 'multipleLinks')}\n\n` +
     `${t(lang, 'limits')}\n\n` +
+    `${t(lang, 'buttonControls')}\n` +
     `${t(lang, 'questions')} /support`,
     {
       reply_markup: {
@@ -138,8 +142,14 @@ bot.command('start', async (ctx) => {
             { text: t(lang, 'btnStats'), callback_data: 'stats' }
           ],
           [
-            { text: t(lang, 'btnSettings'), callback_data: 'settings' },
-            { text: t(lang, 'btnLanguage'), callback_data: 'change_lang' }
+            { 
+              text: showVideoText ? t(lang, 'btnTextOn') : t(lang, 'btnTextOff'), 
+              callback_data: 'toggle_text' 
+            },
+            { 
+              text: `${langFlag} ${t(lang, 'btnLanguage')}`, 
+              callback_data: 'change_lang' 
+            }
           ]
         ]
       }
@@ -459,15 +469,22 @@ bot.on('callback_query', async (ctx) => {
     console.log('📞 [CALLBACK] Data:', callbackData);
     console.log('👤 [CALLBACK] User ID:', chatId);
 
-    // КРИТИЧНО: Сразу подтверждаем получение callback
-    await ctx.answerCbQuery();
-    console.log('✅ [CALLBACK] answerCbQuery sent');
-
     // 1. Обработка выбора языка
     if (callbackData?.startsWith('lang:')) {
       console.log('🌐 [CALLBACK] Language selection detected');
+      
       const lang = callbackData.split(':')[1] as Language;
       await setUserLanguage(chatId, lang);
+      
+      // Получаем настройку текста
+      const { data: user } = await supabase
+        .from('users')
+        .select('show_video_text')
+        .eq('chat_id', chatId)
+        .single();
+      
+      const showVideoText = user?.show_video_text ?? false;
+      const langFlag = lang === 'ru' ? '🇷🇺' : '🇺🇸';
       
       await ctx.reply(
         `${t(lang, 'welcome')}\n\n` +
@@ -486,12 +503,21 @@ bot.on('callback_query', async (ctx) => {
                 { text: t(lang, 'btnStats'), callback_data: 'stats' }
               ],
               [
-                { text: t(lang, 'btnLanguage'), callback_data: 'change_lang' }
+                { 
+                  text: showVideoText ? t(lang, 'btnTextOn') : t(lang, 'btnTextOff'), 
+                  callback_data: 'toggle_text' 
+                },
+                { 
+                  text: `${langFlag} ${t(lang, 'btnLanguage')}`, 
+                  callback_data: 'change_lang' 
+                }
               ]
             ]
           }
         }
       );
+      
+      await ctx.answerCbQuery();
       console.log('✅ [CALLBACK] Language changed to:', lang);
       return;
     }
@@ -499,6 +525,7 @@ bot.on('callback_query', async (ctx) => {
     // 2. Обработка кнопки смены языка
     if (callbackData === 'change_lang') {
       console.log('🔄 [CALLBACK] Change language button pressed');
+      
       await ctx.reply(
         '🌐 Select language / Выберите язык:',
         {
@@ -512,13 +539,72 @@ bot.on('callback_query', async (ctx) => {
           }
         }
       );
+      
+      await ctx.answerCbQuery();
       console.log('✅ [CALLBACK] Language menu sent');
       return;
     }
 
     const lang = await getUserLanguage(chatId);
 
-    // 3. Обработка кнопки "Статистика"
+    // 3. Обработка кнопки "Текст" (toggle_text)
+    if (callbackData === 'toggle_text') {
+      console.log('📝 [CALLBACK] Toggle text button pressed');
+      
+      // Получаем текущее состояние
+      const { data: user } = await supabase
+        .from('users')
+        .select('show_video_text, language')
+        .eq('chat_id', chatId)
+        .single();
+      
+      const currentValue = user?.show_video_text ?? false;
+      const newValue = !currentValue;
+      const userLang = (user?.language as Language) || lang;
+      const langFlag = userLang === 'ru' ? '🇷🇺' : '🇺🇸';
+      
+      // Обновляем в БД
+      await supabase
+        .from('users')
+        .update({ show_video_text: newValue })
+        .eq('chat_id', chatId);
+      
+      console.log('✅ [CALLBACK] Text toggled:', currentValue, '->', newValue);
+      
+      // Обновляем кнопки с новым состоянием
+      try {
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: [
+            [
+              { text: t(userLang, 'btnSupport'), url: 'https://t.me/feedbckbot' },
+              { text: t(userLang, 'btnStats'), callback_data: 'stats' }
+            ],
+            [
+              { 
+                text: newValue ? t(userLang, 'btnTextOn') : t(userLang, 'btnTextOff'), 
+                callback_data: 'toggle_text' 
+              },
+              { 
+                text: `${langFlag} ${t(userLang, 'btnLanguage')}`, 
+                callback_data: 'change_lang' 
+              }
+            ]
+          ]
+        });
+      } catch (e) {
+        console.log('⚠️ Could not edit message markup:', e);
+      }
+      
+      // Показываем уведомление
+      await ctx.answerCbQuery(
+        newValue ? t(userLang, 'textEnabled') : t(userLang, 'textDisabled'),
+        { show_alert: false }
+      );
+      
+      return;
+    }
+
+    // 4. Обработка кнопки "Статистика"
     if (callbackData === 'stats') {
       console.log('📊 [CALLBACK] Stats button pressed');
       try {
@@ -552,15 +638,18 @@ bot.on('callback_query', async (ctx) => {
           `${t(lang, 'memberSince', { date: memberSince })}`,
           { parse_mode: 'Markdown' }
         );
+        
+        await ctx.answerCbQuery();
         console.log('✅ [CALLBACK] Stats sent successfully');
       } catch (error) {
         console.error('❌ [CALLBACK] Stats error:', error);
         await ctx.reply(t(lang, 'errStats'));
+        await ctx.answerCbQuery();
       }
       return;
     }
 
-    // 4. Обработка кнопки "Альтернативная версия" (retry:)
+    // 5. Обработка кнопки "Альтернативная версия" (retry:)
     if (callbackData?.startsWith('retry:')) {
       console.log('🔄 [CALLBACK] Retry button pressed');
       
@@ -575,6 +664,7 @@ bot.on('callback_query', async (ctx) => {
       const soraUrl = `https://sora.chatgpt.com/p/s_${videoId}`;
       console.log('📥 [CALLBACK] Downloading video:', videoId);
 
+      await ctx.answerCbQuery(); // Подтверждаем сразу
       const statusMsg = await ctx.reply(t(lang, 'downloading'));
 
       try {
@@ -611,12 +701,42 @@ bot.on('callback_query', async (ctx) => {
 
         await ctx.telegram.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
 
-        await ctx.replyWithVideo(
+        // ✅ ПОЛУЧАЕМ НАСТРОЙКУ ПОЛЬЗОВАТЕЛЯ
+        const { data: userData } = await supabase
+          .from('users')
+          .select('show_video_text')
+          .eq('chat_id', chatId)
+          .single();
+
+        const showVideoText = userData?.show_video_text ?? false;
+
+        // ✅ ФОРМИРУЕМ CAPTION
+        let caption = `${t(lang, 'doneAlt')}\n${t(lang, 'fileSize', { size: fileSize })}\n\n${t(lang, 'watermarkWarning')}`;
+
+        // Если включен текст И описание короткое (≤ 900 символов), добавляем в caption
+        if (showVideoText && fullDescription && fullDescription.length <= 900) {
+          caption += `\n\n🎬 ${t(lang, 'videoDescription')}:\n\`\`\`\n${fullDescription}\n\`\`\``;
+        }
+
+        // Отправляем видео
+        const videoMessage = await ctx.replyWithVideo(
           { url: proxyUrl },
-          {
-            caption: `${t(lang, 'doneAlt')}\n${t(lang, 'fileSize', { size: fileSize })}\n\n${t(lang, 'watermarkWarning')}`
+          { 
+            caption,
+            parse_mode: 'Markdown'
           }
         );
+
+        // ✅ Если текст включен И описание длинное (> 900 символов), отправляем отдельно
+        if (showVideoText && fullDescription && fullDescription.length > 900) {
+          await ctx.reply(
+            `🎬 ${t(lang, 'videoDescription')}:\n\`\`\`\n${fullDescription}\n\`\`\``,
+            {
+              parse_mode: 'Markdown',
+              reply_parameters: { message_id: videoMessage.message_id }
+            }
+          );
+        }
 
         await postVideoToChannel({
           videoUrl: proxyUrl,
@@ -664,28 +784,28 @@ bot.on('callback_query', async (ctx) => {
       return;
     }
 
-    // 5. Неизвестный callback
+    // 6. Неизвестный callback
     console.log('⚠️ [CALLBACK] Unknown callback_data:', callbackData);
+    await ctx.answerCbQuery();
     
   } catch (error: any) {
     console.error('❌ [CALLBACK] Handler error:', error);
   }
 });
 
+
 console.log('✅ [INIT] callback_query handler registered');
-
-
 
 bot.on('text', async (ctx) => {
   const chatId = ctx.from!.id;
   const text = ctx.message!.text;
 
-  console.log('📝 [TEXT] Received text message:', text);
-  
-  // Игнорируем команды и ссылки Sora
-  if (text.startsWith('/') || text.match(/sora\.chatgpt\.com/i)) {
-    const lang = await ensureUserExists(chatId, ctx.from!.username);
-    
+  if (text.startsWith('/')) {
+    return;
+  }
+
+  const lang = await ensureUserExists(chatId, ctx.from!.username);
+
   const rate = await checkRateLimit(chatId);
   if (!rate.allowed) return ctx.reply(t(lang, 'errRateLimit'));
 

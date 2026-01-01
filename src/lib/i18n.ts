@@ -12,6 +12,12 @@ export const translations = {
     multipleLinks: '💡 Можно отправить до 5 ссылок за раз (каждая с новой строки)',
     limits: '⚡️ Лимиты: 10 запросов в минуту',
     questions: '❓ Есть вопросы?',
+    buttonControls: 
+      '🎛️ Управление:\n' +
+      '📊 Статистика — ваши загрузки и история\n' +
+      '📝 Текст — показывать/скрывать описание видео\n' +
+      '🌐 Язык — переключение языка интерфейса\n' +
+      '📞 Поддержка — связь с разработчиком\n',
     
     // Кнопки
     btnSupport: '💬 Техподдержка',
@@ -45,6 +51,7 @@ export const translations = {
     doneAlt: '✅ Готово (альтернативная версия)',
     fileSize: '📦 Размер: {size}',
     watermarkWarning: '⚠️ Если логотип остался,\n напишите в /support',
+    videoDescription: 'Описание',
     
     // Ошибки
     errRateLimit: '⏱️ Слишком много запросов! Подождите минуту.',
@@ -65,6 +72,10 @@ export const translations = {
     // Выбор языка
     selectLanguage: '🌐 Выберите язык / Select language:',
     languageChanged: '✅ Язык изменён на Русский',
+    btnTextOn: '📝 Текст: Вкл',
+    btnTextOff: '📝 Текст: Выкл',
+    textEnabled: '✅ Описание видео включено',
+    textDisabled: '❌ Описание видео выключено',
     
     // Рассылка
     broadcastSent: '✅ Рассылка отправлена {sent} пользователям',
@@ -86,6 +97,12 @@ export const translations = {
     multipleLinks: '💡 You can send up to 5 links at once (each on a new line)',
     limits: '⚡️ Limits: 10 requests per minute',
     questions: '❓ Questions?',
+    buttonControls:
+      '🎛️ Controls:\n' +
+      '📊 Statistics — your downloads and history\n' +
+      '📝 Text — show/hide video descriptions\n' +
+      '🌐 Language — switch interface language\n' +
+      '📞 Support — contact developer\n',
     
     // Buttons
     btnSupport: '💬 Support',
@@ -119,6 +136,7 @@ export const translations = {
     doneAlt: '✅ Done (alternative version)',
     fileSize: '📦 Size: {size}',
     watermarkWarning: '⚠️ If watermark remains,\n write to /support',
+    videoDescription: 'Description',
     
     // Errors
     errRateLimit: '⏱️ Too many requests! Wait a minute.',
@@ -139,6 +157,10 @@ export const translations = {
     // Language
     selectLanguage: '🌐 Select language / Выберите язык:',
     languageChanged: '✅ Language changed to English',
+    btnTextOn: '📝 Text: On',
+    btnTextOff: '📝 Text: Off',
+    textEnabled: '✅ Video description enabled',
+    textDisabled: '❌ Video description disabled',
     
     // Broadcast
     broadcastSent: '✅ Broadcast sent to {sent} users',
