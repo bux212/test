@@ -120,7 +120,6 @@ export async function postVideoToChannel(params: PostToChannelParams): Promise<v
     // Проверяем права бота в канале
     const botInfo = await bot.telegram.getMe();
     const chatMember = await bot.telegram.getChatMember(parseInt(CHANNEL_ID), botInfo.id);
-    
     console.log(`👤 Bot status: ${chatMember.status}`);
 
     // Простая проверка: только статус администратора
@@ -139,6 +138,15 @@ export async function postVideoToChannel(params: PostToChannelParams): Promise<v
     const caption = formatCaption(params, userLink);
     const { fullDescription } = params;
 
+    // ✅ КРИТИЧНО: Добавляем проверку URL
+    console.log('📤 Channel video URL:', params.videoUrl);
+    
+    // Проверяем, что это прокси URL
+    if (!params.videoUrl.includes('/api/video/')) {
+      console.warn('⚠️ WARNING: Not a proxy URL! URL:', params.videoUrl);
+      console.warn('⚠️ This may cause "failed to get HTTP URL content" error');
+    }
+
     // Отправляем видео с caption (используем Markdown для корректного отображения ссылок)
     const message = await bot.telegram.sendVideo(parseInt(CHANNEL_ID), params.videoUrl, {
       caption,
@@ -150,9 +158,9 @@ export async function postVideoToChannel(params: PostToChannelParams): Promise<v
     // Если описание больше 900 символов, отправляем вторым сообщением
     if (fullDescription && fullDescription.length > 900) {
       await bot.telegram.sendMessage(
-        parseInt(CHANNEL_ID), 
+        parseInt(CHANNEL_ID),
         `🎬 Полное описание:\n\`\`\`\n${fullDescription}\n\`\`\``,
-        { 
+        {
           parse_mode: 'Markdown',
           reply_parameters: { message_id: message.message_id }
         }
@@ -164,14 +172,14 @@ export async function postVideoToChannel(params: PostToChannelParams): Promise<v
     console.error('❌ Failed to post to channel:', error.message);
     
     // Если ошибка прав - логируем подробности
-    if (error.message?.includes('administrator rights') || 
-        error.message?.includes('not enough rights') || 
+    if (error.message?.includes('administrator rights') ||
+        error.message?.includes('not enough rights') ||
         error.message?.includes('need administrator rights')) {
       console.error('⚠️ Bot lacks required admin rights in channel');
       console.error('💡 Solution: Check bot has "Post Messages" permission in channel settings');
       return;
     }
-    
+
     // Для остальных ошибок логируем и продолжаем
     console.error('⚠️ Channel post failed, reason:', error);
   }

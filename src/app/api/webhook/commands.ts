@@ -8,40 +8,13 @@ import { supabase } from '@/lib/supabase';
 import { processSoraVid7 } from '@/lib/sora-api';
 import { postVideoToChannel } from '@/lib/telegram-channel';
 import { extractFullDescription } from '@/lib/sorapure-downloader';
-import { t, getUserLanguage, setUserLanguage, type Language } from '@/lib/i18n';
+//import { t, getUserLanguage, setUserLanguage, type Language } from '@/lib/i18n';
+import { t, getUserLanguage, setUserLanguage, ensureUserExists, type Language } from '@/lib/i18n'
+
 
 console.log('🤖 [INIT] Bot instance check:', bot ? 'OK' : 'MISSING');
 console.log('👂 [INIT] Registering callback_query handler...');
-async function ensureUserExists(chatId: number, username?: string): Promise<Language> {
-  // Проверяем, есть ли пользователь
-  const { data: existingUser } = await supabase
-    .from('users')
-    .select('language, chat_id')
-    .eq('chat_id', chatId)
-    .single();
 
-  if (existingUser) {
-    // Пользователь существует
-    return (existingUser.language as Language) || 'ru';
-  }
-
-  // Новый пользователь - определяем язык по language_code из Telegram
-  const defaultLang: Language = 'ru'; // можно использовать ctx.from.language_code === 'ru' ? 'ru' : 'en'
-
-  // Создаём пользователя с языком по умолчанию
-  await supabase
-    .from('users')
-    .insert({
-      chat_id: chatId,
-      username: username || null,
-      language: defaultLang,
-      created_at: new Date().toISOString()
-    });
-
-  console.log(`✅ Auto-created user ${chatId} with language: ${defaultLang}`);
-
-  return defaultLang;
-}
 
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '0');
 // Дедупликация
@@ -72,27 +45,52 @@ bot.command('start', async (ctx) => {
   // Проверяем, есть ли уже язык у пользователя
   const { data: existingUser } = await supabase
     .from('users')
-    .select('language, created_at, show_video_text')
+    .select('language, created_at, show_video_text, username, first_name')
     .eq('chat_id', chatId)
     .single();
 
-    const isOldUser = existingUser && 
-      new Date(existingUser.created_at) < new Date('2025-12-29'); // дата перехода на нового бота
+  const isOldUser = existingUser && 
+    new Date(existingUser.created_at) < new Date('2025-12-29'); // дата перехода на нового бота
   
   if (!existingUser || !existingUser.language) {
+    let defaultLanguage: 'ru' | 'en' = 'en';
+    const cis_languages = ['ru', 'uk', 'be', 'kk', 'uz', 'ky', 'tg', 'az', 'hy', 'ka', 'mo'];
+    
+    if (ctx.from.language_code && cis_languages.includes(ctx.from.language_code.toLowerCase())) {
+      defaultLanguage = 'ru';
+      console.log(`🌐 New user ${chatId} from CIS (${ctx.from.language_code}) → Russian`);
+    } else {
+      console.log(`🌐 New user ${chatId} language: ${ctx.from.language_code || 'unknown'} → English`);
+    }
+
     // Новый пользователь - показываем выбор языка
     await supabase
       .from('users')
       .upsert({
         chat_id: chatId,
         username: username,
-        language: null, // Язык ещё не выбран
+        first_name: ctx.from.first_name || null,
+        language: defaultLanguage, // ✅ Автоматически
         show_video_text: false, // По умолчанию выключено
         created_at: new Date().toISOString()
       }, { onConflict: 'chat_id' });
 
+    // ✅ ПОКАЗЫВАЕМ ПРИВЕТСТВИЕ НА ИХ ЯЗЫКЕ (без выбора)
+    const showVideoText = false;
+    const langFlag = defaultLanguage === 'ru' ? '🇷🇺' : '🇺🇸';
+
+    let welcomeText = `${t(defaultLanguage, 'welcome')}\n\n` +
+      `${t(defaultLanguage, 'howToUse')}\n` +
+      `${t(defaultLanguage, 'step1')}\n` +
+      `${t(defaultLanguage, 'step2')}\n` +
+      `${t(defaultLanguage, 'step3')}\n\n` +
+      `${t(defaultLanguage, 'multipleLinks')}\n\n` +
+      `${t(defaultLanguage, 'limits')}\n\n` +
+      `${t(defaultLanguage, 'buttonControls')}\n` +
+      `${t(defaultLanguage, 'questions')} /support`;
+
     // Показываем уведомление о миграции для старых пользователей
-    let welcomeText = '🌐 Please select your language / Пожалуйста, выберите язык:';
+    //let welcomeText = '🌐 Please select your language / Пожалуйста, выберите язык:';
     
     if (isOldUser) {
       welcomeText = 
@@ -110,8 +108,18 @@ bot.command('start', async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '🇺🇸 English', callback_data: 'lang:en' },
-              { text: '🇷🇺 Русский', callback_data: 'lang:ru' }
+              { text: t(defaultLanguage, 'btnSupport'), url: 'https://t.me/feedbckbot' },
+              { text: t(defaultLanguage, 'btnStats'), callback_data: 'stats' }
+            ],
+            [
+              { 
+                text: t(defaultLanguage, 'btnTextOff'), 
+                callback_data: 'toggle_text' 
+              },
+              { 
+                text: `${langFlag} ${t(defaultLanguage, 'btnLanguage')}`, 
+                callback_data: 'change_lang' 
+              }
             ]
           ]
         }
@@ -120,7 +128,28 @@ bot.command('start', async (ctx) => {
   }
 
  // Язык уже выбран - показываем приветствие
-  const lang = (existingUser.language as Language) || 'ru';
+  const lang = existingUser.language as Language;
+  // ✅ ОБНОВЛЯЕМ USERNAME И FIRST_NAME
+  const updates: any = {};
+
+  // ✅ ОБНОВЛЯЕМ USERNAME ЕСЛИ ИЗМЕНИЛСЯ
+  if (username && username !== existingUser.username) {
+    updates.username = username;
+  }
+
+  if (ctx.from.first_name && ctx.from.first_name !== existingUser.first_name) {
+    updates.first_name = ctx.from.first_name;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await supabase
+      .from('users')
+      .update(updates)
+      .eq('chat_id', chatId);
+    
+    console.log(`✅ Updated user ${chatId}:`, updates);
+  }
+
   const showVideoText = existingUser.show_video_text ?? false;
   const langFlag = lang === 'ru' ? '🇷🇺' : '🇺🇸';
 
@@ -350,6 +379,55 @@ bot.command('admin', async (ctx) => {
       `Детали: ${error.message}`
     );
   }
+});
+
+bot.command('update_usernames', async (ctx) => {
+  const chatId = ctx.from.id;
+  
+  // Только для админа
+  if (chatId !== ADMIN_ID) {
+    return await ctx.reply('❌ Access denied');
+  }
+  
+  await ctx.reply('🔄 Starting username update...');
+  
+  const { data: users } = await supabase
+    .from('users')
+    .select('chat_id, username')
+    .is('username', null);
+  
+  if (!users || users.length === 0) {
+    return await ctx.reply('✅ All users already have usernames');
+  }
+  
+  await ctx.reply(`📋 Found ${users.length} users without username. Updating...`);
+  
+  let updated = 0;
+  let failed = 0;
+  
+  for (const user of users) {
+    try {
+      const chatInfo = await bot.telegram.getChat(user.chat_id);
+      
+      if ('username' in chatInfo && chatInfo.username) {
+        await supabase
+          .from('users')
+          .update({ username: chatInfo.username })
+          .eq('chat_id', user.chat_id);
+        
+        updated++;
+        console.log(`✅ Updated ${user.chat_id} → @${chatInfo.username}`);
+      }
+      
+      // Задержка 100ms
+      await new Promise(r => setTimeout(r, 100));
+    } catch (error: any) {
+      failed++;
+      console.error(`❌ Failed for ${user.chat_id}:`, error.message);
+    }
+  }
+  
+  await ctx.reply(`✅ Done!\n✅ Updated: ${updated}\n❌ Failed: ${failed}`);
 });
 
 
@@ -810,7 +888,12 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  const lang = await ensureUserExists(chatId, ctx.from!.username);
+  const lang = await ensureUserExists(
+    chatId, 
+    ctx.from!.username, 
+    ctx.from!.language_code,
+    ctx.from!.first_name
+  );
 
   const rate = await checkRateLimit(chatId);
   if (!rate.allowed) return ctx.reply(t(lang, 'errRateLimit'));

@@ -58,7 +58,7 @@ async function getEndpoint(): Promise<string> {
 /**
  * Основная функция скачивания видео
  */
-export async function downloadSoraVideo(soraUrl: string): Promise<VideoResult> {
+export async function downloadSoraVideo(soraUrl: string): Promise<DownloadResult> {
   const videoId = soraUrl.match(/(?:ps|p\/s_|s_)([a-f0-9]{32})/i)?.[1];
   if (!videoId) throw new Error('Invalid Sora URL');
 
@@ -69,14 +69,13 @@ export async function downloadSoraVideo(soraUrl: string): Promise<VideoResult> {
   // 1. PRIMARY: api.dyysy.com
   try {
     console.log('🔵 Step 1: Getting endpoint (with cache)');
-    
     const endpoint = await getEndpoint();
     console.log('📍 Current endpoint:', endpoint);
-
+    
     const cleanUrl = soraUrl.split('?')[0];
     const apiUrl = `https://api.dyysy.com/${endpoint}/${cleanUrl}`;
     console.log('📤 API URL:', apiUrl);
-
+    
     const apiRes = await fetch(apiUrl, {
       method: 'GET',
       headers: {
@@ -85,55 +84,22 @@ export async function downloadSoraVideo(soraUrl: string): Promise<VideoResult> {
       },
       signal: AbortSignal.timeout(25000)
     });
-
+    
     const contentType = apiRes.headers.get('content-type') || '';
     console.log('📦 Content-Type:', contentType);
-
-    // ⚠️ НОВОЕ: Проверка на устаревший endpoint
+    
+    // ⚠️ Проверка на устаревший endpoint
     if (!apiRes.ok || contentType.includes('text/html')) {
       console.log('⚠️ API error detected, invalidating cache...');
       cachedEndpoint = null; // Сбрасываем кэш
-      
-      // Если это первая попытка, пробуем получить свежий endpoint
-      if (cachedEndpoint === null) {
-        console.log('🔄 Retrying with fresh endpoint...');
-        const freshEndpoint = await getEndpoint(); // Получит новый
-        const retryUrl = `https://api.dyysy.com/${freshEndpoint}/${cleanUrl}`;
-        console.log('📤 Retry URL:', retryUrl);
-        
-        const retryRes = await fetch(retryUrl, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0',
-            'Accept': 'application/json'
-          },
-          signal: AbortSignal.timeout(25000)
-        });
-        
-        if (retryRes.ok && !retryRes.headers.get('content-type')?.includes('text/html')) {
-          const retryData = await retryRes.json();
-          if (retryData.links?.mp4) {
-            console.log('✅ dyysy SUCCESS (after retry)');
-            return{
-              videoUrl: retryData.links.mp4,
-              title: retryData.post_info?.title || 'Sora Video',
-              apiUsed: 'dyysy'
-            };
-          }
-        }
-      }
-      
       throw new Error(`API returned HTTP ${apiRes.status} or HTML`);
     }
-
+    
     const data = await apiRes.json();
     console.log('📦 API response:', JSON.stringify(data).slice(0, 500));
-
+    
     if (data.links?.mp4) {
-      console.log('🔗 Full MP4 URL:', data.links.mp4); // <- Добавь эту строку
-      console.log('🔗 MD URL (low quality):', data.links?.md); // <- И эту
-      console.log('🔗 GIF URL:', data.links?.gif); // <- И эту для сравнения
-      
+      console.log('🔗 Full MP4 URL:', data.links.mp4);
       console.log('✅ dyysy SUCCESS');
       return {
         videoUrl: data.links.mp4,
@@ -141,17 +107,16 @@ export async function downloadSoraVideo(soraUrl: string): Promise<VideoResult> {
         apiUsed: 'dyysy'
       };
     }
-
-    throw new Error('No MP4 link in response');
-
-  } catch (error: any) {
-    console.log('❌ dyysy failed:', error.message);
+    
+    throw new Error('No MP4 link in dyysy response');
+    
+  } catch (dyysyError: any) {
+    console.log('❌ dyysy failed:', dyysyError.message);
   }
 
   // 2. FALLBACK: soracdn.workers.dev
   try {
     console.log('🟡 Trying soracdn.workers.dev (fallback)');
-    
     const cleanUrl = soraUrl.split('?')[0];
     const encodedUrl = encodeURIComponent(cleanUrl);
     
@@ -164,32 +129,35 @@ export async function downloadSoraVideo(soraUrl: string): Promise<VideoResult> {
       },
       signal: AbortSignal.timeout(20000)
     });
-
+    
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
-
+    
     const data = await res.json();
     console.log('📦 soracdn response:', JSON.stringify(data).slice(0, 500));
     
     if (data.links?.mp4) {
       console.log('✅ soracdn SUCCESS');
-      return{
+      return {
         videoUrl: data.links.mp4,
         title: data.post_info?.title || data.title || 'Sora Video',
-        apiUsed: 'dyysy'
+        apiUsed: 'soracdn' // ← исправил с 'dyysy' на 'soracdn'
       };
-      
     }
     
-    return {
-    videoUrl: data.links.mp4,
-    title: data.post_info?.title || 'Sora Video',
-    apiUsed: 'dyysy'
-  };
+    throw new Error('No MP4 link in soracdn response');
 
   } catch (error: any) {
     console.log('❌ soracdn failed:', error.message);
+  }
+
+  // 3. LAST RESORT: vid7.link
+  try {
+    console.log('🟣 Trying vid7.link (last resort)');
+    return await downloadViaVid7(soraUrl);
+  } catch (vid7Error: any) {
+    console.log('❌ vid7 failed:', vid7Error.message);
   }
 
   throw new Error('Все API недоступны');

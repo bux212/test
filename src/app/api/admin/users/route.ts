@@ -8,8 +8,9 @@ export async function GET() {
     
     const { data: users, error } = await supabase
       .from('users')
-      .select('chat_id, username, success_count, created_at')
-      .order('success_count', { ascending: false });
+      .select('chat_id, username, first_name, success_count, created_at, language, show_video_text')
+      .order('success_count', { ascending: false })
+
 
     if (error) {
       console.error('Supabase error:', error);

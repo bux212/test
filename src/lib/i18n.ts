@@ -203,3 +203,64 @@ export async function setUserLanguage(chatId: number, language: Language): Promi
     .update({ language })
     .eq('chat_id', chatId);
 }
+
+export async function ensureUserExists(chatId: number, username?: string, languageCode?: string, firstName?: string): Promise<Language> {
+  const { supabase } = await import('@/lib/supabase');
+  
+  const { data: user } = await supabase
+    .from('users')
+    .select('language, username, first_name')
+    .eq('chat_id', chatId)
+    .single();
+
+  if (user) {
+    // ✅ ОБНОВЛЯЕМ USERNAME И FIRST_NAME ЕСЛИ ИЗМЕНИЛИСЬ
+    const updates: any = {};
+    
+    if (username && username !== user.username) {
+      updates.username = username;
+      console.log(`✅ Updated username for ${chatId}: ${username}`);
+    }
+    
+    if (firstName && firstName !== user.first_name) {
+      updates.first_name = firstName;
+      console.log(`✅ Updated first_name for ${chatId}: ${firstName}`);
+    }
+    
+    if (Object.keys(updates).length > 0) {
+      await supabase
+        .from('users')
+        .update(updates)
+        .eq('chat_id', chatId);
+    }
+    
+    return (user.language as Language) || 'ru';
+  }
+
+  // ✅ ОПРЕДЕЛЯЕМ ЯЗЫК ПО TELEGRAM LANGUAGE_CODE
+  let defaultLanguage: Language = 'en';
+  const cis_languages = ['ru', 'uk', 'be', 'kk', 'uz', 'ky', 'tg', 'az', 'hy', 'ka', 'mo'];
+  
+  if (languageCode && cis_languages.includes(languageCode.toLowerCase())) {
+    defaultLanguage = 'ru';
+    console.log(`🌐 User ${chatId} from CIS (${languageCode}) → Russian`);
+  } else {
+    console.log(`🌐 User ${chatId} language: ${languageCode || 'unknown'} → English`);
+  }
+
+  // Новый пользователь
+  await supabase
+    .from('users')
+    .insert({
+      chat_id: chatId,
+      username: username || null,
+      first_name: firstName || null, // ✅ Сохраняем имя
+      language: defaultLanguage,
+      show_video_text: false,
+      created_at: new Date().toISOString()
+    });
+
+  console.log(`✅ Created user ${chatId} with language: ${defaultLanguage}`);
+
+  return defaultLanguage;
+}

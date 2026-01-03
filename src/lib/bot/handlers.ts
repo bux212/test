@@ -6,7 +6,8 @@ import { Context } from 'telegraf';
 import { supabase } from '@/lib/supabase';
 import { postVideoToChannel } from '@/lib/telegram-channel';
 import { extractFullDescription } from '@/lib/sorapure-downloader';
-import { getUserLanguage, t } from '@/lib/i18n';
+import { getUserLanguage, ensureUserExists, t } from '@/lib/i18n'
+
 
 const processedMessages = new Map();
 
@@ -69,10 +70,13 @@ export async function createProxyUrl(
   return `${baseUrl}/api/video/${task.id}`;
 }
 
-export async function processUrl(ctx: Context, url: string, index?: number, total?: number) {
+export async function processUrl(ctx: any, url: string, index?: number, total?: number) {
   const chatId = ctx.from!.id;
   const username = ctx.from!.username;
-  const lang = await getUserLanguage(chatId);
+  const languageCode = ctx.from?.language_code; // ✅ Получаем язык
+  const firstName = ctx.from?.first_name
+  
+  const lang = await ensureUserExists(chatId, username, languageCode, firstName); // ✅ Передаём все параметры
 
   const prefix = index !== undefined && total !== undefined
     ? `[${index}/${total}] `
