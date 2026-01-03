@@ -1,6 +1,10 @@
 import type { VideoResult } from '@/types/video';
 
-
+interface DownloadResult {
+  videoUrl: string;
+  title: string;
+  apiUsed: string;
+}
 
 // Глобальный кэш для endpoint
 let cachedEndpoint: { value: string; timestamp: number } | null = null;
@@ -191,71 +195,92 @@ export async function downloadSoraVideo(soraUrl: string): Promise<VideoResult> {
   throw new Error('Все API недоступны');
 }
 
+function extractVideoId(url: string): string | null {
+  // Поддерживаем форматы:
+  // https://sora.chatgpt.com/p/s_abc123...
+  // https://sora.chatgpt.com/ps/abc123...
+  const match = url.match(/\/(?:p\/s_|ps\/)([a-f0-9]{32})/i);
+  return match ? match[1] : null;
+}
+
 /**
  * Альтернативный API для удаления логотипа (vid7.link)
  */
-export async function downloadViaVid7(soraUrl: string): Promise<VideoResult> {
-  const videoId = soraUrl.match(/(?:ps|p\/s_|s_)([a-f0-9]{32})/i)?.[1];
+export async function downloadViaVid7(soraUrl: string): Promise<DownloadResult> {
+  const videoId = extractVideoId(soraUrl);
   if (!videoId) throw new Error('Invalid Sora URL');
 
   console.log('🟣 Trying vid7.link API for video:', videoId);
 
   try {
-    const cleanUrl = soraUrl.split('?')[0];
+    // ✅ ПРАВИЛЬНЫЙ ENDPOINT (POST запрос)
+    const apiUrl = 'https://vid7.link/api/sora-download';
     
-    const res = await fetch('https://vid7.link/api/sora-download', {
+    console.log('📤 API URL:', apiUrl);
+    console.log('📤 Sora URL:', soraUrl);
+    
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': '*/*',
+        'Origin': 'https://vid7.link',
         'Referer': 'https://vid7.link/sora-ai-video-downloader',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       },
       body: JSON.stringify({
-        shareLink: cleanUrl
+        shareLink: soraUrl
       }),
       signal: AbortSignal.timeout(30000)
     });
 
-    const responseText = await res.text();
-    console.log('📦 vid7 status:', res.status);
-    console.log('📦 vid7 raw response:', responseText.slice(0, 500));
+    console.log('📦 vid7 status:', response.status);
 
-    if (!res.ok) {
-      throw new Error(`vid7 HTTP ${res.status}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ vid7 error response:', errorText);
+      throw new Error(`vid7 API returned ${response.status}`);
     }
 
-    const data = JSON.parse(responseText);
+    const data = await response.json();
+    console.log('📦 vid7 raw response:', JSON.stringify(data).substring(0, 500));
 
-    // ✅ ИСПРАВЛЕНИЕ: downloads — это МАССИВ
-    if (data.code !== 200 || !Array.isArray(data.data?.downloads) || data.data.downloads.length === 0) {
-      console.error('📦 Full vid7 response:', JSON.stringify(data, null, 2));
-      throw new Error('No direct URL in vid7 response');
+    if (data.code !== 200 || !data.data || !data.success) {
+      throw new Error('vid7 API error: ' + (data.msg || 'Unknown error'));
     }
 
-    const firstDownload = data.data.downloads[0];
+    // ✅ Извлекаем прямую ссылку на видео из массива downloads
+    let videoUrl = null;
     
-    if (!firstDownload?.url) {
-      throw new Error('No download URL in vid7 response');
+    if (data.data.downloads && data.data.downloads.length > 0) {
+      // Берём первую ссылку (HD без водяного знака)
+      videoUrl = data.data.downloads[0].url;
+    }
+    
+    if (!videoUrl) {
+      console.error('❌ No video URL in response:', JSON.stringify(data));
+      throw new Error('No video URL in vid7 response');
     }
 
-    const directUrl = firstDownload.url;
-    console.log('🔗 Direct URL from vid7 (raw):', directUrl);
+    console.log('🔗 Direct URL from vid7 (no watermark):', videoUrl);
 
-    // Используем прокси vid7 для обхода CORS
-    const proxyUrl = `https://dl.vid7.link/api/proxy-download?url=${encodeURIComponent(directUrl)}&type=video`;
-    
-    console.log('🔗 Proxy URL (final):', proxyUrl.slice(0, 200));
-    
+    // Извлекаем title
+    let title = 'Untitled';
+    if (data.data.prompt) {
+      title = data.data.prompt;
+    } else if (data.data.title) {
+      title = data.data.title;
+    }
+
     return {
-      videoUrl: proxyUrl,
-      title: extractTitle(data.data.title) || 'Sora Video',
+      videoUrl: videoUrl,
+      title: title,
       apiUsed: 'vid7'
     };
 
-  } catch (error: any) {    
-    console.error('❌ vid7 failed:', error.message);
-    throw error;
+  } catch (error: any) {
+    console.error('❌ vid7 API error:', error);
+    throw new Error(`vid7 download failed: ${error.message}`);
   }
 }
 

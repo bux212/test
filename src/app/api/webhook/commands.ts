@@ -664,7 +664,9 @@ bot.on('callback_query', async (ctx) => {
       const soraUrl = `https://sora.chatgpt.com/p/s_${videoId}`;
       console.log('📥 [CALLBACK] Downloading video:', videoId);
 
-      await ctx.answerCbQuery(); // Подтверждаем сразу
+      // ✅ КРИТИЧНО: Сразу подтверждаем callback (до 5 секунд!)
+      await ctx.answerCbQuery('⏳ Загрузка альтернативной версии...', { show_alert: false });
+      
       const statusMsg = await ctx.reply(t(lang, 'downloading'));
 
       try {
@@ -755,10 +757,13 @@ bot.on('callback_query', async (ctx) => {
       } catch (error: any) {
         console.error('❌ [CALLBACK] Retry error:', error);
         
+        // Удаляем сообщение "Загрузка..."
+        await ctx.telegram.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+        
         let errorMsg = t(lang, 'errGeneric');
         if (error.message?.includes('not found')) {
           errorMsg = t(lang, 'errVideoNotFound');
-        } else if (error.message?.includes('timeout')) {
+        } else if (error.message?.includes('timeout') || error.message?.includes('terminated')) {
           errorMsg = t(lang, 'errTimeout');
         }
 
@@ -783,6 +788,7 @@ bot.on('callback_query', async (ctx) => {
       }
       return;
     }
+
 
     // 6. Неизвестный callback
     console.log('⚠️ [CALLBACK] Unknown callback_data:', callbackData);
