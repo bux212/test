@@ -1,0 +1,403 @@
+{
+  "name": "SANET RSS → Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "4e3e98ba-1266-47ae-83ff-79afa979a3c4",
+      "name": "Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "scrape",
+        "url": "https://sanet.st/video-courses/rss",
+        "scrapeOptions": {
+          "options": {
+            "formats": {
+              "format": [
+                {
+                  "type": "rawHtml"
+                }
+              ]
+            },
+            "headers": {}
+          }
+        },
+        "requestOptions": {}
+      },
+      "id": "9738444b-d4b7-4c26-8e75-a299ca3b55d3",
+      "name": "Fetch RSS",
+      "type": "@mendable/n8n-nodes-firecrawl.firecrawl",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "firecrawlApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  const d = j.data || {};\n  const xml = j.rawHtml || j.html || d.rawHtml || d.html || j.markdown || d.markdown || '';\n  out.push({ json: { data: xml } });\n}\nreturn out;"
+      },
+      "id": "0fd39733-abbc-4ca8-aa79-d88b2ed4fada",
+      "name": "Extract Feed XML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "explicitArray": false,
+          "mergeAttrs": true
+        }
+      },
+      "id": "0af90057-a599-4099-8937-f1384fdd024e",
+      "name": "Parse XML",
+      "type": "n8n-nodes-base.xml",
+      "typeVersion": 1,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "rss.channel.item",
+        "options": {}
+      },
+      "id": "aebc70f7-5453-43b9-bcc2-56eb1871db66",
+      "name": "Split Feed Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $input.item.json;\nconst desc = typeof j.description === 'string' ? j.description : (j.description && j.description._) || '';\nconst m = desc.match(/<img[^>]+src=[\"\\']([^\"\\']+)[\"\\']/i);\nconst link = typeof j.link === 'string' ? j.link : (j.link && j.link._) || j.guid || '';\nconst title = typeof j.title === 'string' ? j.title : (j.title && j.title._) || '';\nconst rawImg = m ? m[1] : '';\n// SANET thumbnails are AVIF, which Telegram sendPhoto cannot fetch by URL.\n// Route through an image proxy that converts to JPEG on the fly.\nj.imageUrl = rawImg ? 'https://images.weserv.nl/?url=' + encodeURIComponent(rawImg) + '&output=jpg' : '';\nj.postLink = link;\nj.postTitle = title;\n// Extract lecture duration and file size from the description HTML.\n// Match on raw HTML so a following tag (e.g. </p>) bounds the value.\nconst durM = desc.match(/Duration:\\s*([^|<\\n]+)/i);\nconst sizeM = desc.match(/Size:\\s*([^|<\\n]+)/i);\nconst duration = durM ? durM[1].trim() : '';\nconst size = sizeM ? sizeM[1].trim() : '';\nj.duration = duration;\nj.size = size;\nconst metaParts = [];\nif (duration) metaParts.push('⏱ ' + duration);\nif (size) metaParts.push('💾 ' + size);\nj.meta = metaParts.join('   •   ');\n// Extract the category slug that follows /video-courses/ in the post URL.\nconst secM = link.match(/\\/video-courses\\/([^\\/]+)\\//i);\nj.section = secM ? secM[1] : '';\nreturn $input.item;"
+      },
+      "id": "5e5b88ef-3207-4522-86e7-3dddd6a6ad5b",
+      "name": "Extract Image & Link",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "img-not-empty",
+              "leftValue": "={{ $json.imageUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1571042f-cc69-4a20-812c-71975a6128fc",
+      "name": "Has Image",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.postLink }}",
+        "options": {
+          "scope": "node",
+          "historySize": 10000
+        }
+      },
+      "id": "4a26914c-023c-4f15-82e2-238d8b9a4af8",
+      "name": "Only New Posts",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "-1001104374505",
+        "file": "={{ $json.imageUrl }}",
+        "additionalFields": {
+          "caption": "=🎓 <b>{{ $json.postTitle }}</b>\n\n<blockquote>{{ $json.meta }}</blockquote>\n📂 {{ $json.section }}\n\n🔗 <a href=\"{{ $json.postLink }}\">Открыть курс на SANET</a>",
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "f2bb5c29-fbbf-456f-9d0b-21b92c6b541e",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1568,
+        0
+      ],
+      "webhookId": "2e1365bd-df42-47ad-a588-15bdb15fc4e0",
+      "credentials": {
+        "telegramApi": {
+          "id": "xgq6apP6RCq9yQpC",
+          "name": "Telegram1  account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "16966caf-6e74-4b5c-8ac6-9ee5348b0908",
+      "name": "Throttle 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2016,
+        0
+      ],
+      "webhookId": "8b3d66c9-3c3c-4b85-aa99-66993b566b2e"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "b2644e63-dd98-4ae5-b11d-92de3e005ad0",
+      "name": "Loop Over Posts",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1568,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Alarm\n**Alarm** bot. [Guide](https://docs.n8n.io/workflows/components/sticky-notes/)"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1120,
+        240
+      ],
+      "typeVersion": 1,
+      "id": "4d5d7b26-e538-492e-bdbc-6dde53887b65",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 10 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch RSS": {
+      "main": [
+        [
+          {
+            "node": "Extract Feed XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Feed XML": {
+      "main": [
+        [
+          {
+            "node": "Parse XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse XML": {
+      "main": [
+        [
+          {
+            "node": "Split Feed Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Feed Items": {
+      "main": [
+        [
+          {
+            "node": "Extract Image & Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Image & Link": {
+      "main": [
+        [
+          {
+            "node": "Has Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Image": {
+      "main": [
+        [
+          {
+            "node": "Only New Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only New Posts": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Telegram": {
+      "main": [
+        [
+          {
+            "node": "Throttle 2s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttle 2s": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Posts": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ed5a27b4-848c-4ec7-8788-c214b78feaec",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "877befe99ad3c65208b53d6b9718f738c994715950c2a05c46c3f3226dc74eca"
+  },
+  "nodeGroups": [
+    {
+      "id": "b2b60c3e-202d-4d7c-b241-e6af355c4642",
+      "name": "Ingest",
+      "nodeIds": [
+        "9738444b-d4b7-4c26-8e75-a299ca3b55d3",
+        "0fd39733-abbc-4ca8-aa79-d88b2ed4fada",
+        "0af90057-a599-4099-8937-f1384fdd024e",
+        "aebc70f7-5453-43b9-bcc2-56eb1871db66"
+      ],
+      "description": "Poll the SANET video-courses RSS feed and split it into items."
+    },
+    {
+      "id": "df0f7233-97ad-4a30-b3cb-373c007f8b89",
+      "name": "Transform",
+      "nodeIds": [
+        "5e5b88ef-3207-4522-86e7-3dddd6a6ad5b",
+        "1571042f-cc69-4a20-812c-71975a6128fc",
+        "4a26914c-023c-4f15-82e2-238d8b9a4af8"
+      ],
+      "description": "Extract post image, link, duration, size and section, keep items with an image, and drop already-sent posts."
+    },
+    {
+      "id": "bc023ffe-2384-47c0-a04c-c7b0756e7ca6",
+      "name": "Deliver",
+      "nodeIds": [
+        "b2644e63-dd98-4ae5-b11d-92de3e005ad0",
+        "f2bb5c29-fbbf-456f-9d0b-21b92c6b541e",
+        "16966caf-6e74-4b5c-8ac6-9ee5348b0908"
+      ],
+      "description": "Send posts one at a time with a short pause and retry-on-fail to respect Telegram rate limits."
+    }
+  ],
+  "id": "CiT6Lsgy2dmYXECI",
+  "tags": []
+}
